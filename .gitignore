@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+dist/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Hermes
+.hermes/plans/
+.hermes/tasks/
+.pytest_cache/
+
+# Distribution artifacts
+agent-game-skill*.zip
+*.tar.gz
+
+# Local tools
+.python-version
+pytest
+uvicorn

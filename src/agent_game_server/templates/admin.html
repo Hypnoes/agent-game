@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>agent-game 管理后台</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#c9d1d9; --green:#3fb950; --red:#f85149; --blue:#58a6ff; --yellow:#d2991d; --purple:#bc8cff; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font:14px/1.5 -apple-system,BlinkMacSystemFont,sans-serif; padding:24px; }
+  h1 { font-size:20px; margin-bottom:4px; color:var(--blue); }
+  .subtitle { color:#8b949e; font-size:12px; margin-bottom:16px; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+  .dot.live { background:var(--green); animation:pulse 2s infinite; }
+  .dot.dead { background:var(--red); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  table { width:100%; border-collapse:collapse; }
+  th,td { padding:8px 12px; text-align:left; border-bottom:1px solid var(--border); }
+  th { color:#8b949e; font-weight:500; font-size:12px; text-transform:uppercase; }
+  tr:hover { background:var(--card); }
+  tr.flash { animation:flashBg 0.6s ease-out; }
+  @keyframes flashBg { 0%{background:var(--blue);opacity:0.2} 100%{background:transparent} }
+  .status { display:inline-block; padding:2px 8px; border-radius:10px; font-size:12px; }
+  .status.in_progress, .status.bidding, .status.waiting { background:#1f6feb33; color:var(--blue); }
+  .status.won, .status.finished { background:#3fb95033; color:var(--green); }
+  .status.lost { background:#f8514933; color:var(--red); }
+  .game-type { display:inline-block; padding:2px 6px; border-radius:6px; font-size:11px; }
+  .game-type.guess_number { background:var(--blue); color:#fff; }
+  .game-type.liars_dice { background:var(--purple); color:#fff; }
+  .target { font-family:monospace; font-weight:bold; color:var(--green); }
+  .detail-panel { margin-top:16px; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; display:none; }
+  .detail-panel.active { display:block; }
+  .guess-history { margin-top:8px; }
+  .guess-row { display:flex; gap:12px; padding:6px 0; border-bottom:1px solid var(--border); font-family:monospace; font-size:13px; align-items:center; }
+  .guess-row .num { color:var(--blue); min-width:30px; }
+  .guess-row .val { min-width:40px; }
+  .guess-row .too_high { color:var(--red); }
+  .guess-row .too_low { color:var(--yellow); }
+  .guess-row .correct { color:var(--green); font-weight:bold; }
+  .guess-row .ts { color:#8b949e; font-size:11px; margin-left:auto; }
+  .call-row { display:flex; gap:12px; padding:4px 0; border-bottom:1px solid var(--border); font-size:13px; }
+  .call-row .player { color:var(--blue); min-width:80px; }
+  .call-row .bid { font-family:monospace; color:var(--yellow); }
+  .call-row .msg { color:#8b949e; font-style:italic; margin-left:auto; }
+  .dice-display { display:flex; gap:12px; margin:8px 0; }
+  .dice-display .player-dice { background:var(--card); border:1px solid var(--border); border-radius:6px; padding:8px 12px; }
+  .dice-display .player-dice .name { color:var(--blue); font-size:12px; margin-bottom:4px; }
+  .dice-display .player-dice .dice { font-family:monospace; font-size:16px; letter-spacing:4px; }
+  .empty { color:#8b949e; padding:24px; text-align:center; }
+  .stat { display:inline-block; margin-right:16px; color:#8b949e; font-size:13px; }
+  .stat strong { color:var(--text); }
+  .time-cell { font-size:12px; color:#8b949e; }
+  .event-badge { position:fixed; top:16px; right:16px; background:var(--blue); color:#fff; padding:4px 10px; border-radius:10px; font-size:11px; display:none; animation:fadeOut 1.5s ease-out forwards; }
+  @keyframes fadeOut { 0%{opacity:1;display:block} 80%{opacity:0} 100%{opacity:0;display:none} }
+</style>
+</head>
+<body>
+<h1>🎮 agent-game 管理后台</h1>
+<div class="subtitle">
+  <span id="ws-indicator"><span class="dot live"></span> WebSocket 实时推送</span>
+</div>
+<div class="event-badge" id="event-badge">📡 更新</div>
+<table>
+  <thead><tr><th>类型</th><th>对局 ID</th><th>状态</th><th>详情</th><th>创建时间</th></tr></thead>
+  <tbody id="game-list"></tbody>
+</table>
+<div class="detail-panel" id="detail-panel">
+  <h2 id="detail-title" style="font-size:16px;margin-bottom:12px;"></h2>
+  <div class="guess-history" id="detail-content"></div>
+</div>
+
+<script>
+const ADMIN_API = '/admin/games';
+let activeGid = null;
+
+function adminFetch(url) {
+  const opts = {};
+  if (window.ADMIN_TOKEN) opts.headers = {'X-Admin-Token': window.ADMIN_TOKEN};
+  return fetch(url, opts);
+}
+
+// ── WebSocket ──
+const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const ws = new WebSocket(protocol + '//' + location.host + '/admin/ws');
+
+ws.onopen = () => {
+  document.getElementById('ws-indicator').innerHTML = '<span class="dot live"></span> WebSocket 实时推送';
+  refresh();
+};
+
+ws.onclose = () => {
+  document.getElementById('ws-indicator').innerHTML = '<span class="dot dead"></span> 已断开，<a href="javascript:location.reload()" style="color:var(--blue)">刷新</a>';
+};
+
+ws.onmessage = (e) => {
+  refresh();
+  if (activeGid) showDetail(activeGid);
+  const badge = document.getElementById('event-badge');
+  badge.style.display = 'block';
+  badge.style.animation = 'none';
+  badge.offsetHeight;
+  badge.style.animation = 'fadeOut 1.5s ease-out forwards';
+};
+
+// ── 数据 ──
+async function refresh() {
+  try {
+    const resp = await adminFetch(ADMIN_API);
+    render(await resp.json());
+  } catch(e) {}
+}
+
+function formatTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(typeof ts === 'string' ? ts : ts * 1000);
+  return d.toLocaleTimeString() + '.' + String(d.getMilliseconds()).padStart(3,'0');
+}
+
+const TYPE_LABEL = { guess_number: '🔢 猜数字', liars_dice: '🎲 大话骰' };
+const STATUS_ORDER = { in_progress:0, bidding:0, waiting:1, won:2, lost:3, finished:2 };
+
+function render(games) {
+  const tbody = document.getElementById('game-list');
+  if (!games.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">暂无对局 — 让 Agent 开始游戏吧</td></tr>';
+    return;
+  }
+  games.sort((a,b) => (STATUS_ORDER[a.status]||0)-(STATUS_ORDER[b.status]||0) || (b.created_at||0)-(a.created_at||0));
+
+  tbody.innerHTML = games.map(g => {
+    const type = TYPE_LABEL[g.game_type] || g.game_type;
+    const sid = g.session_id || g.game_id;
+    let detail = '';
+    if (g.game_type === 'guess_number') {
+      const t = g.status==='in_progress' ? '🔒 '+g.target : g.target;
+      detail = `🎯${t} (${g.guess_count}/${g.max_attempts})`;
+    } else if (g.game_type === 'liars_dice') {
+      const p = g.players ? g.players.join(' vs ') : '?';
+      const call = g.current_call ? `${g.current_call.quantity}×${g.current_call.face}` : '—';
+      detail = `${p} | 叫: ${call} | 回合: ${g.current_turn}`;
+    }
+    return `<tr onclick="showDetail('${sid}')" style="cursor:pointer">
+      <td><span class="game-type ${g.game_type}">${type}</span></td>
+      <td><code>${sid}</code></td>
+      <td><span class="status ${g.status}">${g.status}</span></td>
+      <td>${detail}</td>
+      <td class="time-cell">${formatTime(g.created_at)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function showDetail(gid) {
+  activeGid = gid;
+  adminFetch(ADMIN_API + '/' + gid).then(r=>r.json()).then(g => {
+    const panel = document.getElementById('detail-panel');
+    panel.classList.add('active');
+    const content = document.getElementById('detail-content');
+    const sid = g.session_id || g.game_id;
+
+    if (g.game_type === 'guess_number') {
+      document.getElementById('detail-title').innerHTML =
+        `🔢 猜数字 <code>${sid}</code> — 🎯 ${g.target}` +
+        (g.ended_at ? ` — ${formatTime(g.ended_at)}` : '');
+      content.innerHTML = g.guesses && g.guesses.length
+        ? g.guesses.map((gg,i) => `<div class="guess-row">
+            <span class="num">#${i+1}</span>
+            <span class="val">猜 ${gg.number}</span>
+            <span class="${gg.result}">${gg.result}</span>
+            <span class="ts">${formatTime(gg.timestamp)}</span></div>`).join('')
+        : '<div class="empty">尚未猜测</div>';
+    } else if (g.game_type === 'liars_dice') {
+      const winner = g.winner != null ? g.players[g.winner] : '?';
+      document.getElementById('detail-title').innerHTML =
+        `🎲 大话骰 <code>${sid}</code>` +
+        (g.winner != null ? ` — 🏆 ${winner} 胜` : '');
+      let html = '<div class="dice-display">';
+      (g.all_dice || []).forEach((d, i) => {
+        html += `<div class="player-dice"><div class="name">${g.players[i]}</div>
+          <div class="dice">${d.map(x => '⚀⚁⚂⚃⚄⚅'[x-1]).join(' ')}</div></div>`;
+      });
+      html += '</div>';
+      if (g.call_history && g.call_history.length) {
+        html += '<div style="margin-top:8px">';
+        g.call_history.forEach(c => {
+          html += `<div class="call-row">
+            <span class="player">${c.player}</span>
+            <span class="bid">${c.quantity}×${c.face}</span>
+            ${c.message ? `<span class="msg">"${c.message}"</span>` : ''}
+          </div>`;
+        });
+        html += '</div>';
+      }
+      content.innerHTML = html || '<div class="empty">暂无数据</div>';
+    }
+  });
+}
+
+setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send('ping'); }, 30000);
+</script>
+</body>
+</html>

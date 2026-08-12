@@ -1,0 +1,45 @@
+[project]
+name = "agent-game"
+version = "0.2.2"
+description = "Game framework for AI agents — MCP-based games with prompt-injection loop pattern"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    { name = "agent-game contributors" },
+]
+
+# ── 全量依赖（不再用 optional，verify 兼容）──
+dependencies = [
+    "mcp>=2.0.0",
+    "httpx>=0.28.0",
+    "fastapi>=0.141.1",
+    "uvicorn>=0.52.1",
+    "websockets>=17.0.1",
+]
+
+# ── 两个 CLI 入口 ──
+[project.scripts]
+agent-game-mcp = "agent_game_mcp.client:main"
+agent-game-server = "agent_game_server.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# ── 两个子包都打包进 wheel ──
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_game_mcp", "src/agent_game_server"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.hermes.verify]
+bootstrap = "uv sync"
+test = "uv run pytest"
+start = "uv run uvicorn agent_game_server.game_server:app --host 0.0.0.0 --port 8000"
+poll = "http://127.0.0.1:8000/games/tools"
