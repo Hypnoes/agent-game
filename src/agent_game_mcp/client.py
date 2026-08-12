@@ -10,14 +10,13 @@ Agent 侧客户端。启动时从 Game Server 动态拉取工具列表。
 """
 
 import asyncio
-import sys as _sys
-import signal as _signal
 import json
 import os
-from urllib.parse import urljoin
+import signal as _signal
+import sys as _sys
 
 import httpx
-import mcp.types as types
+from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
@@ -58,11 +57,14 @@ def _parse_tool_name(name: str) -> tuple[str, str]:
 # Handlers
 # ═══════════════════════════════════════════
 
+
 async def handle_list_tools(ctx, params) -> types.ListToolsResult:
     return types.ListToolsResult(tools=_TOOLS)
 
 
-async def handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
+async def handle_call_tool(
+    ctx, params: types.CallToolRequestParams
+) -> types.CallToolResult:
     name = params.name
     args = dict(params.arguments or {})
 
@@ -77,7 +79,9 @@ async def handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.Ca
                 resp = await client.post(f"{GAME_SERVER}/games/{game_type}")
                 if resp.status_code != 200:
                     text = f"❌ 创建游戏失败: {resp.text}"
-                    return types.CallToolResult(content=[types.TextContent(type="text", text=text)])
+                    return types.CallToolResult(
+                        content=[types.TextContent(type="text", text=text)]
+                    )
                 session_id = resp.json()["session_id"]
 
             # 记住 session_id（后续调用自动注入）
@@ -97,7 +101,7 @@ async def handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.Ca
 
         except httpx.ConnectError:
             text = f"❌ 无法连接 Game Server ({GAME_SERVER})。请先启动 Game Server。"
-        except Exception as e:
+        except (httpx.HTTPError, ValueError, TypeError) as e:
             text = f"❌ 错误: {e}"
 
     return types.CallToolResult(content=[types.TextContent(type="text", text=text)])
@@ -117,7 +121,9 @@ server = Server(
 async def _run():
     await _load_tools()
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+        await server.run(
+            read_stream, write_stream, server.create_initialization_options()
+        )
 
 
 def main():

@@ -1,7 +1,9 @@
 """大话骰引擎测试（单 session 实例 + 自描述协议）"""
 
-import pytest
 import time
+
+import pytest
+
 from agent_game_server.games.liars_dice import LiarsDiceEngine
 
 
@@ -45,6 +47,7 @@ def test_first_bid_always_valid():
     e.handle_action("join", player_name="Bob")
     turn = e.current_turn
     e.handle_action("bid", player_index=turn, quantity=2, face=3)
+    assert e.current_call is not None
     assert e.current_call.quantity == 2
 
 
@@ -56,6 +59,7 @@ def test_higher_bid_valid():
     e.handle_action("bid", player_index=turn, quantity=2, face=3)
     next_turn = e.current_turn
     e.handle_action("bid", player_index=next_turn, quantity=3, face=3)
+    assert e.current_call is not None
     assert e.current_call.quantity == 3
 
 
@@ -87,7 +91,8 @@ def test_bid_message():
     e.handle_action("join", player_name="Alice")
     e.handle_action("join", player_name="Bob")
     turn = e.current_turn
-    state = e.handle_action("bid", player_index=turn, quantity=2, face=3, message="bluff")
+    e.handle_action("bid", player_index=turn, quantity=2, face=3, message="bluff")
+    assert e.current_call is not None
     assert e.current_call.message == "bluff"
 
 

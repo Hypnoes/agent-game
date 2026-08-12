@@ -4,11 +4,9 @@ GameEngine Protocol — 所有游戏的抽象契约。
 新增游戏只需实现此协议，GameManager/API/MCP Client 全部自动生效。
 """
 
-from typing import Optional, Protocol
+from typing import Protocol
 
-
-class StateMachine:  # forward reference
-    pass
+from agent_game_server.games.state_machine import StateMachine
 
 
 class GameEngine(Protocol):
@@ -21,6 +19,7 @@ class GameEngine(Protocol):
 
     # ── 状态机 ──
     _fsm: StateMachine
+
     @property
     def state(self) -> str: ...
     @property
@@ -54,7 +53,7 @@ class GameEngine(Protocol):
 
     # ── 生命周期 ──
 
-    def check_timeout(self, now: float) -> Optional[dict]:
+    def check_timeout(self, now: float) -> dict | None:
         """超时检查。返回 None 表示未超时，返回 {"expired": True, "type": "..."} 表示需要清理。"""
         ...
 

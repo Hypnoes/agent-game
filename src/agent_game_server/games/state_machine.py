@@ -67,8 +67,6 @@ class StateMachine(ABC):
 
     def _on_before_transition(self, to: str):
         """转移前执行。子类可做额外校验、日志等。"""
-        pass
 
     def _on_after_transition(self, to: str):
         """转移后执行。子类可更新辅助数据、发事件等。"""
-        pass

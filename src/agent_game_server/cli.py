@@ -9,9 +9,10 @@ agent-game-server CLI
 """
 
 import os as _os
-import sys as _sys
 import signal as _signal
+import sys as _sys
 import uuid as _uuid
+
 import uvicorn
 
 from agent_game_server.game_server import app  # verify 用 main:app

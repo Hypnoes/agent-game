@@ -1,6 +1,7 @@
 """GuessNumberEngine 测试（单 session 实例 + 自描述协议）"""
 
 import time
+
 from agent_game_server import GuessNumberEngine
 
 
@@ -26,7 +27,7 @@ def test_guess_flow():
     e = GuessNumberEngine()
     # Force target for deterministic test
     e.target = 50
-    
+
     result = e.handle_action("guess", number=30)
     assert e.guess_count == 1
     assert e.last_result == "too_low"

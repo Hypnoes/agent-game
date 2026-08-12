@@ -15,29 +15,24 @@ flowchart TB
         PF["Prompt 透传\n(引擎自生成)"]
     end
 
-    subgraph Server["Game Server :8800"]
+    subgraph Server["FastAPI Game Server :8800"]
         GM[GameManager\nsession 路由 + 生命周期]
         subgraph Games["Games"]
             GN[GuessNumberEngine]
             LD[LiarsDiceEngine]
         end
-    end
-
-    subgraph Admin["Admin Server :8801"]
-        WS[WebSocket 推送]
-        DB[Dashboard HTML]
+        API["/games/*\n/admin/*\nWebSocket /admin/ws"]
     end
 
     LLM <-->|"stdio JSON-RPC"| Client
     Client <-->|"HTTP"| Server
-    Server <-->|"HTTP"| Admin
     GM --> GN
     GM --> LD
+    API --> GM
 
     style Agent fill:#1f6feb22,stroke:#58a6ff
     style Client fill:#3fb95022,stroke:#3fb950
     style Server fill:#d2991d22,stroke:#d2991d
-    style Admin fill:#bc8cff22,stroke:#bc8cff
 ```
 
 **零改动加游戏:** 新 Engine 实现自描述协议 → `GameManager.register()` → 全部自动生效。
@@ -54,19 +49,28 @@ agent-game/
 │   └── agent_game_server/             # 服务端
 │       ├── __init__.py                # 包 re-export
 │       ├── manager.py                 # GameManager（session 路由）
-│       ├── game_server.py             # Game API (port 8800)
-│       ├── admin_server.py            # Admin + WebSocket (port 8801)
+│       ├── game_server.py             # Game API + Admin + WebSocket (port 8800)
 │       ├── cli.py                     # agent-game-server CLI
+│       ├── prompt.py                  # 模板/Prompt 渲染
 │       ├── templates/
 │       │   └── admin.html             # 管理仪表盘
+│       ├── assets/
+│       │   ├── guess_number_prompts.py
+│       │   └── liars_dice_prompts.py
 │       └── games/
+│           ├── __init__.py
+│           ├── game_engine.py         # Engine 协议
+│           ├── state_machine.py       # 通用状态机
 │           ├── guess_number.py        # 猜数字引擎
 │           └── liars_dice.py          # 大话骰引擎
 ├── tests/
 │   ├── test_engine.py
 │   ├── test_liars_dice.py
-│   └── test_manager.py
-└── pyproject.toml
+│   ├── test_manager.py
+│   └── test_matching.py
+├── pyproject.toml
+├── README.md
+└── pytest/
 ```
 
 ## 引擎自描述协议
@@ -87,21 +91,25 @@ agent-game/
 ## 快速开始
 
 ```bash
-# 启动服务端（Game + Admin）
-uv sync && uv run main.py
+# 安装依赖
+uv sync
+
+# 启动服务端（Game API + Admin，端口 8800）
+uv run main.py
 
 # 或安装为全局命令
 uv tool install .
 agent-game-server
-
-# 安装 Agent 客户端
-uv tool install .
 ```
 
 Agent MCP 配置：
 ```json
 {"mcpServers": {"agent-game": {"command": "agent-game-mcp"}}}
 ```
+
+默认环境变量：
+- `AGENT_GAME_SERVER`：Game Server 地址，默认 `http://localhost:8800`
+- `AGENT_GAME_ADMIN_TOKEN`：Admin 鉴权令牌，未显式设置时会随机生成
 
 ## 当前游戏
 
@@ -112,4 +120,10 @@ Agent MCP 配置：
 
 ## 管理后台
 
-http://localhost:8801/admin — WebSocket 实时推送，观测全部对局和秘密数据。
+http://localhost:8800/admin
+
+- 提供 Admin Dashboard HTML
+- 提供 `/admin/games` 列表接口
+- 提供 `/admin/games/{session_id}` 详情接口
+- 提供 WebSocket `/admin/ws` 实时推送状态更新
+- 需要通过 `X-Admin-Token` 头校验权限；启动时默认自动生成 token

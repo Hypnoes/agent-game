@@ -6,13 +6,11 @@ GuessNumberEngine — 猜数字，单 session 实例 + 自描述协议。
 
 import random
 import time
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
-from pathlib import Path
-from agent_game_server.prompt import Prompt
 from agent_game_server.games.game_engine import GameEngine
 from agent_game_server.games.state_machine import StateMachine
+from agent_game_server.prompt import Prompt
 
 _PROMPT_MODULE = "agent_game_server.assets.guess_number_prompts"
 
@@ -53,9 +51,9 @@ class GuessNumberEngine(GameEngine):
         self.target = random.randint(min_num, max_num)
         self.guesses: list[dict] = []
         self.guess_count = 0
-        self.last_result: Optional[str] = None
-        self.created_at = datetime.now(timezone.utc).isoformat()
-        self.ended_at: Optional[str] = None
+        self.last_result: str | None = None
+        self.created_at = datetime.now(UTC).isoformat()
+        self.ended_at: str | None = None
         self.last_action = time.time()
 
     @property
@@ -86,7 +84,12 @@ class GuessNumberEngine(GameEngine):
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "number": {"type": "integer", "description": "猜测数字（1-100）", "minimum": 1, "maximum": 100},
+                        "number": {
+                            "type": "integer",
+                            "description": "猜测数字（1-100）",
+                            "minimum": 1,
+                            "maximum": 100,
+                        },
                     },
                     "required": ["number"],
                 },
@@ -139,10 +142,10 @@ class GuessNumberEngine(GameEngine):
         else:
             raise ValueError(f"未知 action: {action}")
 
-    def check_timeout(self, now: float) -> Optional[dict]:
+    def check_timeout(self, now: float) -> dict | None:
         if self._fsm.is_in("in_progress") and now - self.last_action > 600:
             self._fsm.transition_to("lost")
-            self.ended_at = datetime.now(timezone.utc).isoformat()
+            self.ended_at = datetime.now(UTC).isoformat()
             return {"type": "session_timeout", "expired": True}
         return None
 
@@ -162,18 +165,20 @@ class GuessNumberEngine(GameEngine):
         self.guess_count += 1
         self.last_result = result
         self.last_action = time.time()
-        self.guesses.append({
-            "number": number,
-            "result": result,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        self.guesses.append(
+            {
+                "number": number,
+                "result": result,
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+        )
 
         if result == "correct":
             self._fsm.transition_to("won")
-            self.ended_at = datetime.now(timezone.utc).isoformat()
+            self.ended_at = datetime.now(UTC).isoformat()
         elif self.guess_count >= self.max_attempts:
             self._fsm.transition_to("lost")
-            self.ended_at = datetime.now(timezone.utc).isoformat()
+            self.ended_at = datetime.now(UTC).isoformat()
 
     # ── Prompt 生成（模板渲染，修改 YAML 后调 reload() 热更新）──
 
@@ -181,22 +186,34 @@ class GuessNumberEngine(GameEngine):
         P = self.get_prompts()
 
         if self._fsm.is_in("won"):
-            return P.render("won", last_guess=self.guesses[-1]['number'], count=self.guess_count)
+            return P.render(
+                "won", last_guess=self.guesses[-1]["number"], count=self.guess_count
+            )
 
         if self._fsm.is_in("lost"):
-            return P.render("lost", max_attempts=self.max_attempts, target=self.target,
-                          history=[g['number'] for g in self.guesses])
+            return P.render(
+                "lost",
+                max_attempts=self.max_attempts,
+                target=self.target,
+                history=[g["number"] for g in self.guesses],
+            )
 
         last = self.guesses[-1] if self.guesses else None
         if last:
             hint = {"too_low": "太低 ↑", "too_high": "太高 ↓"}[last["result"]]
-            return P.render("in_progress",
-                count=self.guess_count, last_number=last["number"], hint=hint,
+            return P.render(
+                "in_progress",
+                count=self.guess_count,
+                last_number=last["number"],
+                hint=hint,
                 remaining=self.max_attempts - self.guess_count,
-                min_num=self.min, max_num=self.max,
-                history=[g['number'] for g in self.guesses],
+                min_num=self.min,
+                max_num=self.max,
+                history=[g["number"] for g in self.guesses],
             )
-        return P.render("in_progress_first",
+        return P.render(
+            "in_progress_first",
             remaining=self.max_attempts,
-            min_num=self.min, max_num=self.max,
+            min_num=self.min,
+            max_num=self.max,
         )

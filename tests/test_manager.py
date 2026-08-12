@@ -1,11 +1,13 @@
 """GameManager 测试"""
 
 import time
+
 import pytest
+
 from agent_game_server.manager import GameManager
 
-
 # ── 最小化 Engine 用于测试 GM 的路由和生命周期 ──
+
 
 class FakeEngine:
     game_type = "fake_game"
@@ -20,8 +22,11 @@ class FakeEngine:
     @classmethod
     def describe_tools(cls):
         return [
-            {"name": "fake_game_do_thing", "description": "Do a thing",
-             "input_schema": {"type": "object", "properties": {}, "required": []}},
+            {
+                "name": "fake_game_do_thing",
+                "description": "Do a thing",
+                "input_schema": {"type": "object", "properties": {}, "required": []},
+            },
         ]
 
     def get_public_state(self):
@@ -32,12 +37,17 @@ class FakeEngine:
         return {"result": f"done_{x}"}
 
     def check_timeout(self, now):
-        if self.status == "in_progress" and hasattr(self, '_expire_at') and now > self._expire_at:
+        if (
+            self.status == "in_progress"
+            and hasattr(self, "_expire_at")
+            and now > self._expire_at
+        ):
             return {"type": "timeout", "expired": True}
         return None
 
 
 # ── 测试 ──
+
 
 def test_register_and_create():
     gm = GameManager()
