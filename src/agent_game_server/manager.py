@@ -36,11 +36,15 @@ class GameManager:
                 f"未知游戏类型: {game_type}。已注册: {list(self._registry)}"
             )
 
+        create_params = dict(params)
+
         # 多人游戏：尝试通过 token 重连已有 session
-        player_token = params.get("player_token")
+        player_token = create_params.pop("player_token", None)
         if player_token:
             for sid, eng in list(self._engines.items()):
-                if hasattr(eng, "_find_player_by_token"):
+                if hasattr(eng, "_find_player_by_token") and getattr(
+                    eng, "phase", getattr(eng, "status", None)
+                ) != "finished":
                     candidate = cast(Any, eng)
                     pi = candidate._find_player_by_token(player_token)
                     if pi is not None:
@@ -59,7 +63,7 @@ class GameManager:
 
         # 新建 session
         session_id = str(uuid.uuid4())[:8]
-        engine = engine_cls(**params)
+        engine = engine_cls(**create_params)
         self._engines[session_id] = engine
         self._created_at[session_id] = time.time()
         return session_id, engine

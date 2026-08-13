@@ -46,6 +46,25 @@ class FakeEngine:
         return None
 
 
+class RejoinEngine:
+    game_type = "rejoin_game"
+    game_name = "重连游戏"
+    player_mode = "multi"
+
+    def __init__(self, phase="waiting"):
+        self.phase = phase
+        self.players = [{"token": "token-123"}]
+
+    def get_public_state(self):
+        return {"phase": self.phase}
+
+    def _find_player_by_token(self, token):
+        for idx, p in enumerate(self.players):
+            if p["token"] == token:
+                return idx
+        return None
+
+
 # ── 测试 ──
 
 
@@ -119,3 +138,30 @@ def test_remove():
     gm.remove(sid)
     assert gm.get(sid) is None
     assert len(gm.list_sessions()) == 0
+
+
+def test_finished_session_is_not_reused_by_player_token():
+    gm = GameManager()
+    gm.register("rejoin_game", RejoinEngine)
+    finished_sid = "finished1"
+    gm._engines[finished_sid] = RejoinEngine(phase="finished")
+    gm._created_at[finished_sid] = time.time()
+
+    new_sid, engine = gm.create("rejoin_game", player_token="token-123")
+
+    assert new_sid != finished_sid
+    assert engine.phase == "waiting"
+
+
+def test_active_session_is_reused_by_player_token():
+    gm = GameManager()
+    gm.register("rejoin_game", RejoinEngine)
+    active_sid = "active1"
+    active_engine = RejoinEngine(phase="bidding")
+    gm._engines[active_sid] = active_engine
+    gm._created_at[active_sid] = time.time()
+
+    sid, engine = gm.create("rejoin_game", player_token="token-123")
+
+    assert sid == active_sid
+    assert engine is active_engine

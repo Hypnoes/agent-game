@@ -62,6 +62,29 @@ async def handle_list_tools(ctx, params) -> types.ListToolsResult:
     return types.ListToolsResult(tools=_TOOLS)
 
 
+async def _create_session(
+    client: httpx.AsyncClient, game_type: str, **params
+) -> str:
+    resp = await client.post(f"{GAME_SERVER}/games/{game_type}", json=params)
+    if resp.status_code != 200:
+        raise ValueError(f"创建游戏失败: {resp.text}")
+    return resp.json()["session_id"]
+
+
+async def _get_session_status(
+    client: httpx.AsyncClient, session_id: str
+) -> str | None:
+    resp = await client.get(f"{GAME_SERVER}/games/{session_id}")
+    if resp.status_code == 404:
+        return None
+    if resp.status_code != 200:
+        raise ValueError(f"获取游戏状态失败: {resp.text}")
+    data = resp.json()
+    if isinstance(data, dict):
+        return data.get("status")
+    return None
+
+
 async def handle_call_tool(
     ctx, params: types.CallToolRequestParams
 ) -> types.CallToolResult:
@@ -73,16 +96,22 @@ async def handle_call_tool(
             game_type, action = _parse_tool_name(name)
 
             # 自动管理 session_id
-            session_id = args.pop("session_id", None) or _SESSIONS.get(game_type)
+            explicit_session_id = args.pop("session_id", None)
+            session_id = explicit_session_id
+            create_kwargs = {}
+            if "player_token" in args:
+                create_kwargs["player_token"] = args["player_token"]
             if not session_id:
-                # 新建 session
-                resp = await client.post(f"{GAME_SERVER}/games/{game_type}")
-                if resp.status_code != 200:
-                    text = f"❌ 创建游戏失败: {resp.text}"
-                    return types.CallToolResult(
-                        content=[types.TextContent(type="text", text=text)]
-                    )
-                session_id = resp.json()["session_id"]
+                if action == "start":
+                    _SESSIONS.pop(game_type, None)
+                session_id = _SESSIONS.get(game_type)
+                if action == "join" and session_id:
+                    status = await _get_session_status(client, session_id)
+                    if status in (None, "finished"):
+                        _SESSIONS.pop(game_type, None)
+                        session_id = None
+            if not session_id:
+                session_id = await _create_session(client, game_type, **create_kwargs)
 
             # 记住 session_id（后续调用自动注入）
             _SESSIONS[game_type] = session_id
@@ -93,6 +122,19 @@ async def handle_call_tool(
                 f"{GAME_SERVER}/games/{session_id}/action",
                 json=body,
             )
+            if (
+                resp.status_code == 404
+                and explicit_session_id is None
+                and action != "start"
+            ):
+                _SESSIONS.pop(game_type, None)
+                session_id = await _create_session(client, game_type, **create_kwargs)
+                _SESSIONS[game_type] = session_id
+                body["session_id"] = session_id
+                resp = await client.post(
+                    f"{GAME_SERVER}/games/{session_id}/action",
+                    json=body,
+                )
             if resp.status_code >= 400:
                 text = f"❌ {resp.json().get('detail', resp.text)}"
             else:

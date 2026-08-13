@@ -22,7 +22,6 @@ import os as _os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
@@ -33,8 +32,15 @@ from agent_game_server.manager import GameManager
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    asyncio.create_task(_poll_and_broadcast())
-    yield
+    task = asyncio.create_task(_poll_and_broadcast(), name="admin-state-poller")
+    _track_background_task(task)
+    try:
+        yield
+    finally:
+        for bg_task in list(_background_tasks):
+            bg_task.cancel()
+        if _background_tasks:
+            await asyncio.gather(*_background_tasks, return_exceptions=True)
 
 
 app = FastAPI(title="agent-game", version="0.2.0", lifespan=lifespan)
@@ -55,38 +61,50 @@ _ADMIN_TOKEN = _os.environ.get("AGENT_GAME_ADMIN_TOKEN", "")
 # ═══════════════════════════════════════════
 
 _ws_clients: set[WebSocket] = set()
+_background_tasks: set[asyncio.Task] = set()
+_last_admin_state_signature = ""
+
+
+def _track_background_task(task: asyncio.Task) -> None:
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+def _admin_state_signature() -> str:
+    return json.dumps(
+        manager.list_sessions(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+async def _broadcast_admin_state() -> None:
+    dead: set[WebSocket] = set()
+    for ws in list(_ws_clients):
+        try:
+            await ws.send_text(json.dumps({"type": "state_changed"}))
+        except RuntimeError:
+            dead.add(ws)
+    _ws_clients.difference_update(dead)
+
+
+async def _refresh_admin_state() -> bool:
+    global _last_admin_state_signature
+
+    manager.check_timeouts()
+    signature = _admin_state_signature()
+    if signature == _last_admin_state_signature:
+        return False
+    _last_admin_state_signature = signature
+    await _broadcast_admin_state()
+    return True
 
 
 async def _poll_and_broadcast():
-    global _ws_clients
-
-    last_hash = ""
     while True:
         await asyncio.sleep(0.5)
-        try:
-            async with httpx.AsyncClient(timeout=2.0) as c:
-                resp = await c.get(
-                    "http://localhost:8800/admin/games",
-                    headers={"X-Admin-Token": _ADMIN_TOKEN},
-                )
-                if resp.status_code != 200:
-                    continue
-                games = resp.json()
-        except (httpx.HTTPError, ValueError):
-            continue
-        h = str(len(games))
-        for g in games:
-            h += f"|{g.get('session_id', '')}:{g.get('status', '')}"
-        if h == last_hash:
-            continue
-        last_hash = h
-        dead: set[WebSocket] = set()
-        for ws in list(_ws_clients):
-            try:
-                await ws.send_text(json.dumps({"type": "state_changed"}))
-            except RuntimeError:
-                dead.add(ws)
-        _ws_clients -= dead
+        await _refresh_admin_state()
 
 
 @app.websocket("/admin/ws")
@@ -123,9 +141,13 @@ def list_tools():
 
 
 @app.post("/games/{game_type}")
-async def create_game(game_type: str):
+async def create_game(game_type: str, request: Request):
     try:
-        sid, e = manager.create(game_type)
+        params = await request.json()
+    except ValueError:
+        params = {}
+    try:
+        sid, e = manager.create(game_type, **params)
     except ValueError as ex:
         raise HTTPException(status_code=400, detail=str(ex))
     return {
