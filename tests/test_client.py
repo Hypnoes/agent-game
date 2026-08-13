@@ -164,3 +164,55 @@ def test_finished_liars_dice_session_starts_new_game(monkeypatch):
         assert result.content[0].text == "joined fresh"
     finally:
         client._SESSIONS = original_sessions
+
+
+def test_state_action_uses_long_timeout(monkeypatch):
+    original_sessions = dict(client._SESSIONS)
+    captured = {}
+    try:
+        client._SESSIONS = {"liars_dice": "sid"}
+        fake = FakeAsyncClient([FakeResponse(payload={"prompt": "ok"})])
+
+        def fake_async_client(timeout=10.0):
+            captured["timeout"] = timeout
+            return fake
+
+        monkeypatch.setattr(client, "_parse_tool_name", lambda n: ("liars_dice", "state"))
+        monkeypatch.setattr(client.httpx, "AsyncClient", fake_async_client)
+
+        asyncio.run(
+            client.handle_call_tool(
+                None,
+                type("P", (), {"name": "liars_dice_state", "arguments": {"player_index": 0}})(),
+            )
+        )
+
+        assert captured["timeout"] >= 55.0
+    finally:
+        client._SESSIONS = original_sessions
+
+
+def test_non_state_action_uses_default_timeout(monkeypatch):
+    original_sessions = dict(client._SESSIONS)
+    captured = {}
+    try:
+        client._SESSIONS = {"guess_number": "sid"}
+        fake = FakeAsyncClient([FakeResponse(payload={"prompt": "ok"})])
+
+        def fake_async_client(timeout=10.0):
+            captured["timeout"] = timeout
+            return fake
+
+        monkeypatch.setattr(client, "_parse_tool_name", lambda n: ("guess_number", "guess"))
+        monkeypatch.setattr(client.httpx, "AsyncClient", fake_async_client)
+
+        asyncio.run(
+            client.handle_call_tool(
+                None,
+                type("P", (), {"name": "guess_number_guess", "arguments": {"number": 42}})(),
+            )
+        )
+
+        assert captured["timeout"] == 10.0
+    finally:
+        client._SESSIONS = original_sessions

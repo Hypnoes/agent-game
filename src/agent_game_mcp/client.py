@@ -91,10 +91,13 @@ async def handle_call_tool(
     name = params.name
     args = dict(params.arguments or {})
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        try:
-            game_type, action = _parse_tool_name(name)
+    # 解析工具名（在构造 AsyncClient 之前，以便按 action 选超时）
+    game_type, action = _parse_tool_name(name)
+    # state action 走阻塞等待路径，最长 55s，客户端超时给足余量
+    timeout = 60.0 if action == "state" else 10.0
 
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
             # 自动管理 session_id
             explicit_session_id = args.pop("session_id", None)
             session_id = explicit_session_id
