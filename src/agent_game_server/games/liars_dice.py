@@ -124,7 +124,7 @@ class LiarsDiceEngine(GameEngine):
             },
             {
                 "name": "liars_dice_state",
-                "description": "查看大话骰对局当前状态：对手叫了什么、带话、你的骰子、轮到谁。只需提供你的 player_index。",
+                "description": "查看大话骰对局当前状态。**注意：如果还没轮到你，这个调用会阻塞等待（最长约60秒）直到对手行动、游戏结束或超时。返回慢是正常的——不是出错，是服务器在等你对面的玩家决策。** 只需提供你的 player_index。",
                 "input_schema": {
                     "type": "object",
                     "properties": {

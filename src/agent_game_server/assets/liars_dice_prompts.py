@@ -13,14 +13,15 @@ PROMPTS = {
         "🎲 已加入匹配队列！当前 {players}/{needed} 人\n"
         "⏳ 等待对手加入…已等待 {waited} 秒（匹配超时: 120 秒）\n"
         "**不要重启 MCP 或重新加入** — 服务器自动匹配，放弃只会让你失去位置。\n"
-        "10 秒后调用 liars_dice_state 查看。"
+        "再调用一次 liars_dice_state 继续等待（该调用会阻塞，直到对手出现或超时）。"
     ),
     "not_your_turn": (
         "⏳ 等待 {current_player} 行动中…({progress}){patience}\n"
         "当前叫数: {call_str}\n"
         "你的骰子: {dice}\n\n"
-        "🔄 这不是你的回合。**不要重启或放弃游戏。**\n"
-        "10 秒后调用 liars_dice_state(player_index={player_index}) 查看。"
+        "🔄 对手仍在思考。**这不是出错，是正常的等待。**\n"
+        "再调用一次 liars_dice_state(player_index={player_index}) 继续等——这次调用会阻塞最长 60 秒，"
+        "直到轮到你了才返回。"
     ),
     "your_turn": (
         "🎲 **轮到你了！这是你的回合，必须立即行动。**{msg_line}\n"
