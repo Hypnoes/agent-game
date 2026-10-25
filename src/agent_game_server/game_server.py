@@ -2,6 +2,7 @@
 agent-game Game Server — 单端口统一 API。
 
 Agent API:
+    POST /mcp                            → MCP over Streamable HTTP 端点
     GET  /games/tools                    → MCP 工具定义
     POST /games/{game_type}              → 创建 session
     POST /games/{session_id}/action      → 执行动作
@@ -22,34 +23,21 @@ import os as _os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from starlette.routing import Route
 
 from agent_game_server.games.guess_number import GuessNumberEngine
 from agent_game_server.games.liars_dice import LiarsDiceEngine
 from agent_game_server.manager import GameManager
+from agent_game_server.mcp_server import build_mcp_server
 
 __version__ = "0.2.2"
 
-# 单次 state 调用的最长挂起时间（秒）。低于 client.py 的 60 秒传输超时，
-# 也低于 MCP 消费端默认的 60 秒工具调用超时，保证超时总是由本服务先发生。
+# 单次 state 调用的最长挂起时间（秒）。低于 MCP 消费端默认的 60 秒工具调用
+# 超时，保证超时总是由本服务先发生，Agent 收到的是状态文本而非传输层错误。
 BLOCK_BUDGET = 55.0
-
-
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    task = asyncio.create_task(_poll_and_broadcast(), name="admin-state-poller")
-    _track_background_task(task)
-    try:
-        yield
-    finally:
-        for bg_task in list(_background_tasks):
-            bg_task.cancel()
-        if _background_tasks:
-            await asyncio.gather(*_background_tasks, return_exceptions=True)
-
-
-app = FastAPI(title="agent-game", version=__version__, lifespan=lifespan)
 
 manager = GameManager()
 manager.register("guess_number", GuessNumberEngine)
@@ -110,7 +98,14 @@ async def _poll_and_broadcast():
         await _refresh_admin_state()
 
 
-@app.websocket("/admin/ws")
+# ═══════════════════════════════════════════
+# 路由（挂在 router 上，便于 create_app 重复构建）
+# ═══════════════════════════════════════════
+
+router = APIRouter()
+
+
+@router.websocket("/admin/ws")
 async def admin_websocket(ws: WebSocket):
     await ws.accept()
     _ws_clients.add(ws)
@@ -128,12 +123,12 @@ async def admin_websocket(ws: WebSocket):
 # ═══════════════════════════════════════════
 
 
-@app.get("/")
+@router.get("/")
 def root():
     return {"ok": True, "games": list(manager._registry.keys())}
 
 
-@app.get("/games/tools")
+@router.get("/games/tools")
 def list_tools():
     return manager.describe_all_tools()
 
@@ -143,7 +138,7 @@ def list_tools():
 # ═══════════════════════════════════════════
 
 
-@app.post("/games/{game_type}")
+@router.post("/games/{game_type}")
 async def create_game(game_type: str, request: Request):
     try:
         params = await request.json()
@@ -160,7 +155,7 @@ async def create_game(game_type: str, request: Request):
     }
 
 
-@app.post("/games/{session_id}/action")
+@router.post("/games/{session_id}/action")
 async def game_action(session_id: str, request: Request):
     e = manager.get(session_id)
     if not e:
@@ -189,7 +184,7 @@ async def game_action(session_id: str, request: Request):
         raise HTTPException(status_code=400, detail=str(ex))
 
 
-@app.get("/games/{session_id}")
+@router.get("/games/{session_id}")
 def game_public_state(session_id: str):
     e = manager.get(session_id)
     if not e:
@@ -199,7 +194,7 @@ def game_public_state(session_id: str):
     return getattr(e, "status", "unknown")
 
 
-@app.get("/games/{session_id}/state/{player_index}")
+@router.get("/games/{session_id}/state/{player_index}")
 def game_player_state(session_id: str, player_index: int = 0):
     """立即返回，不做任何等待。调试与管理界面的查询入口。"""
     e = manager.get(session_id)
@@ -224,13 +219,13 @@ def _check_admin_token(request: Request):
         raise HTTPException(status_code=403, detail="forbidden")
 
 
-@app.get("/admin/games")
+@router.get("/admin/games")
 def admin_list_all(request: Request):
     _check_admin_token(request)
     return manager.list_sessions()
 
 
-@app.get("/admin/games/{session_id}")
+@router.get("/admin/games/{session_id}")
 def admin_detail(session_id: str, request: Request):
     _check_admin_token(request)
     e = manager.get(session_id)
@@ -239,7 +234,7 @@ def admin_detail(session_id: str, request: Request):
     return e.get_public_state()
 
 
-@app.get("/admin", response_class=HTMLResponse)
+@router.get("/admin", response_class=HTMLResponse)
 def admin_dashboard():
     html = (_TEMPLATE_DIR / "admin.html").read_text(encoding="utf-8")
     token = _os.environ.get("AGENT_GAME_ADMIN_TOKEN", "")
@@ -250,7 +245,7 @@ def admin_dashboard():
     return HTMLResponse(content=html)
 
 
-@app.post("/admin/reload-prompts")
+@router.post("/admin/reload-prompts")
 def reload_prompts(request: Request):
     _check_admin_token(request)
     reloaded = []
@@ -259,3 +254,53 @@ def reload_prompts(request: Request):
             engine_cls.get_prompts().reload()
             reloaded.append(getattr(engine_cls, "game_type", str(engine_cls)))
     return {"ok": True, "reloaded": reloaded}
+
+
+# ═══════════════════════════════════════════
+# App 工厂
+# ═══════════════════════════════════════════
+
+
+def create_app() -> FastAPI:
+    """构建 FastAPI app。
+
+    必须每次新建 app：StreamableHTTPSessionManager.run() 只能在实例上调一次，
+    复用 app 会导致第二次进入 lifespan 时抛 RuntimeError。uvicorn 与测试各自
+    调用本函数获得独立的 app 与 session manager。
+    """
+    mcp_session_manager = StreamableHTTPSessionManager(
+        app=build_mcp_server(manager),
+        stateless=False,
+        session_idle_timeout=600,
+    )
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        task = asyncio.create_task(_poll_and_broadcast(), name="admin-state-poller")
+        _track_background_task(task)
+        async with mcp_session_manager.run():
+            try:
+                yield
+            finally:
+                for bg_task in list(_background_tasks):
+                    bg_task.cancel()
+                if _background_tasks:
+                    await asyncio.gather(*_background_tasks, return_exceptions=True)
+
+    app = FastAPI(title="agent-game", version=__version__, lifespan=lifespan)
+    app.include_router(router)
+
+    # MCP over Streamable HTTP。
+    # 必须用 Route + session_manager.asgi_app：Mount 会 307 重定向到 /mcp/，
+    # 裸 HTTP 客户端失败；自定义 async 包装则因返回 None 触发 TypeError。
+    app.router.routes.append(
+        Route(
+            "/mcp",
+            endpoint=mcp_session_manager.asgi_app,
+            methods=["GET", "POST", "DELETE"],
+        )
+    )
+    return app
+
+
+app = create_app()
