@@ -11,11 +11,10 @@ agent-game-server CLI
 import os as _os
 import signal as _signal
 import sys as _sys
-import uuid as _uuid
 
 import uvicorn
 
-from agent_game_server.game_server import app  # verify 用 main:app
+from agent_game_server.game_server import _ADMIN_TOKEN, app  # verify 用 main:app
 
 
 def main():
@@ -38,12 +37,20 @@ def main():
 
     _signal.signal(_signal.SIGINT, lambda s, f: _sys.exit(0))
 
-    # Admin 内部查询密钥
-    _os.environ.setdefault("AGENT_GAME_ADMIN_TOKEN", str(_uuid.uuid4()))
+    # token 已由 game_server 在导入时解析（环境变量或随机生成）。
+    # 这里只把它打印出来——随机生成的分支没有别的途径能拿到它，
+    # 不打印运维就打不开 /admin 的鉴权页面。
+    source = (
+        "来自 AGENT_GAME_ADMIN_TOKEN"
+        if _os.environ.get("AGENT_GAME_ADMIN_TOKEN")
+        else "本次运行随机生成"
+    )
 
     print("🎮 agent-game starting...")
     print("   Game API:   http://localhost:8800")
-    print("   Admin:      http://localhost:8800/admin")
+    print(f"   Admin:      http://localhost:8800/admin?token={_ADMIN_TOKEN}")
+    print(f"   Admin 查询头: X-Admin-Token: {_ADMIN_TOKEN}")
+    print(f"   Admin token {source}")
     print()
 
     uvicorn.run(app, host="0.0.0.0", port=8800, log_level="warning")

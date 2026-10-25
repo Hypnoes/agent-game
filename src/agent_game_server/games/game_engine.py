@@ -2,11 +2,21 @@
 GameEngine Protocol — 所有游戏的抽象契约。
 
 新增游戏只需实现此协议，GameManager/API/MCP Client 全部自动生效。
+
+关于「可选能力」：describe_tools / get_prompts 并非每款游戏都需要，调用方一律
+用 hasattr() 探测。协议里用 `...` 写的桩方法在运行时是真实存在的可调用对象，
+子类会原样继承——那会让 hasattr() 永远为真，探测形同虚设（一个没有提示词的
+引擎也会被当成「有 get_prompts」）。因此可选方法的签名放在 `if TYPE_CHECKING:`
+里：类型检查器照常校验，运行时不定义，子类不继承。将来若增加可选能力
+（如阻塞式等待），同样放进这个块。
 """
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from agent_game_server.games.state_machine import StateMachine
+
+if TYPE_CHECKING:
+    from agent_game_server.prompt import Prompt
 
 
 class GameEngine(Protocol):
@@ -25,13 +35,6 @@ class GameEngine(Protocol):
     @property
     def phase(self) -> str: ...
     def is_in(self, *states: str) -> bool: ...
-
-    # ── 工具描述 ──
-
-    @classmethod
-    def describe_tools(cls) -> list[dict]:
-        """返回 MCP 工具定义列表 [{name, description, input_schema}]"""
-        ...
 
     # ── 状态查询 ──
 
@@ -57,9 +60,22 @@ class GameEngine(Protocol):
         """超时检查。返回 None 表示未超时，返回 {"expired": True, "type": "..."} 表示需要清理。"""
         ...
 
-    # ── 提示词 ──
+    # ── 可选能力（运行时不存在，只有实现了的引擎才 hasattr 得 True）──
 
-    @classmethod
-    def get_prompts(cls):
-        """返回 Prompt 实例（热重载用）"""
-        ...
+    if TYPE_CHECKING:
+
+        @classmethod
+        def describe_tools(cls) -> list[dict]:
+            """返回 MCP 工具定义列表 [{name, description, input_schema}]。
+
+            可选：没有工具面的引擎不实现它，manager.describe_all_tools() 会跳过。
+            """
+            ...
+
+        @classmethod
+        def get_prompts(cls) -> "Prompt":
+            """返回 Prompt 实例（热重载用）。
+
+            可选：没有提示词模板的引擎不实现它，reload_prompts 会跳过。
+            """
+            ...
