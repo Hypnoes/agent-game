@@ -8,9 +8,6 @@ authors = [
     { name = "agent-game contributors" },
 ]
 
-# ── 运行时依赖（不再用 optional，verify 兼容）──
-# httpx 不在这里：MCP 端点由 mcp SDK 的 ASGI app 提供，服务端源码里没有任何
-# httpx import。只有测试用它做 ASGITransport，故归入 dev 组。
 dependencies = [
     "mcp>=2.0.0",
     "fastapi>=0.141.1",
@@ -18,7 +15,6 @@ dependencies = [
     "websockets>=17.0.1",
 ]
 
-# ── CLI 入口（MCP 端点由服务端自身暴露，不再有本地客户端命令）──
 [project.scripts]
 agent-game-server = "agent_game_server.cli:main"
 
@@ -26,23 +22,15 @@ agent-game-server = "agent_game_server.cli:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-# ── 子包打包进 wheel ──
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_game_server"]
 
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
-    # 仅测试用：tests/test_mcp_server.py 以 httpx.ASGITransport 直连 ASGI app，
-    # 不监听 socket。生产代码路径不导入 httpx。
     "httpx>=0.28.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-[tool.hermes.verify]
-bootstrap = "uv sync"
-test = "uv run pytest"
-start = "uv run uvicorn agent_game_server.game_server:app --host 0.0.0.0 --port 8800"
-poll = "http://127.0.0.1:8800/mcp"
