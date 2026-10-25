@@ -57,6 +57,19 @@ class GameEngine(Protocol):
         """超时检查。返回 None 表示未超时，返回 {"expired": True, "type": "..."} 表示需要清理。"""
         ...
 
+    # ── 阻塞式等待（可选）──
+
+    async def wait_for_change(self, player_index: int, timeout: float) -> str:
+        """可选方法。回合制游戏实现它，让非当前回合的 state 调用在服务端挂起。
+
+        返回 "ready"（已轮到调用方或对局已结束）、"changed"（被唤醒）或 "timeout"（等满预算）。
+        被取消时应让 CancelledError 向上抛出。
+
+        单人即时游戏（如 guess_number）不实现该方法。调用方必须用 hasattr 判断，
+        不能假定所有引擎都有。
+        """
+        ...
+
     # ── 提示词 ──
 
     @classmethod

@@ -15,11 +15,16 @@ import time
 import uuid
 from typing import Any, cast
 
+# 已结束的对局在内存里保留多久（秒）。过期后由 check_timeouts() 回收，
+# 避免 admin/games 列表无限增长。
+FINISHED_RETENTION = 300.0
+
 
 class GameManager:
     def __init__(self):
         self._engines: dict[str, Any] = {}
         self._created_at: dict[str, float] = {}
+        self._finished_at: dict[str, float] = {}
         self._registry: dict[str, type[Any]] = {}
 
     # ── 注册 ──
@@ -70,11 +75,6 @@ class GameManager:
 
     # ── 路由 ──
 
-    def route(self, session_id: str, action: str, **params):
-        engine = self._engines[session_id]
-        method = getattr(engine, action)
-        return method(**params)
-
     def get(self, session_id: str) -> Any | None:
         return self._engines.get(session_id)
 
@@ -104,21 +104,43 @@ class GameManager:
 
     # ── 超时 ──
 
-    def check_timeouts(self) -> list[dict]:
-        """检查所有 session 超时。返回超时事件列表。"""
+    @staticmethod
+    def _is_finished(engine: Any) -> bool:
+        """对局是否已结束。大话骰用 phase，猜数字用 status。"""
+        phase = getattr(engine, "phase", None)
+        if phase is not None:
+            return phase == "finished"
+        return getattr(engine, "status", None) in ("won", "lost")
+
+    def check_timeouts(self, now: float | None = None) -> list[dict]:
+        """检查所有 session 超时，并回收超过保留期的已结束对局。
+
+        返回超时事件列表。已结束对局的回收不产生事件。
+        """
         events = []
-        now = time.time()
+        now = time.time() if now is None else now
         for sid in list(self._engines):
             engine = self._engines[sid]
+
+            # 已结束：第一次看到时记录结束时刻，超过保留期就回收
+            if self._is_finished(engine):
+                finished_at = self._finished_at.setdefault(sid, now)
+                if now - finished_at > FINISHED_RETENTION:
+                    self.remove(sid)
+                continue
+
             if hasattr(engine, "check_timeout"):
                 result = engine.check_timeout(now)
                 if result:
                     events.append({"session_id": sid, **result})
                     if result.get("expired"):
-                        self._engines.pop(sid, None)
-                        self._created_at.pop(sid, None)
+                        self.remove(sid)
+                    elif self._is_finished(engine):
+                        # 判负/结束发生在本次检查里，结束时刻从此刻算起
+                        self._finished_at[sid] = now
         return events
 
     def remove(self, session_id: str):
         self._engines.pop(session_id, None)
         self._created_at.pop(session_id, None)
+        self._finished_at.pop(session_id, None)

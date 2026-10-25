@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from agent_game_server.manager import GameManager
+from agent_game_server.manager import FINISHED_RETENTION, GameManager
 
 # ── 最小化 Engine 用于测试 GM 的路由和生命周期 ──
 
@@ -83,14 +83,6 @@ def test_unknown_game_type():
         gm.create("nonexistent")
 
 
-def test_route():
-    gm = GameManager()
-    gm.register("fake_game", FakeEngine)
-    sid, _ = gm.create("fake_game")
-    result = gm.route(sid, "do_thing", x=42)
-    assert result == {"result": "done_42"}
-
-
 def test_list_sessions():
     gm = GameManager()
     gm.register("fake_game", FakeEngine)
@@ -138,6 +130,41 @@ def test_remove():
     gm.remove(sid)
     assert gm.get(sid) is None
     assert len(gm.list_sessions()) == 0
+
+
+def test_finished_game_reclaimed_after_retention():
+    gm = GameManager()
+    gm.register("rejoin_game", RejoinEngine)
+    done_sid, done_engine = gm.create("rejoin_game")
+    done_engine.phase = "finished"
+    fresh_sid, fresh_engine = gm.create("rejoin_game")
+    fresh_engine.phase = "finished"
+
+    now = time.time()
+    # 首次检查只为 done_engine 记下结束时刻，两个都还在
+    gm.check_timeouts(now=now)
+    assert gm.get(done_sid) is not None
+    assert gm.get(fresh_sid) is not None
+
+    # 把 done_engine 的结束时刻推到保留期之外，只回收它
+    gm._finished_at[done_sid] = now - FINISHED_RETENTION - 1
+    gm.check_timeouts(now=now)
+    assert gm.get(done_sid) is None
+    assert gm.get(fresh_sid) is not None
+    assert done_sid not in gm._created_at
+    assert done_sid not in gm._finished_at
+
+
+def test_remove_clears_finished_at():
+    gm = GameManager()
+    gm.register("rejoin_game", RejoinEngine)
+    sid, engine = gm.create("rejoin_game")
+    engine.phase = "finished"
+    gm.check_timeouts()
+    assert sid in gm._finished_at
+
+    gm.remove(sid)
+    assert sid not in gm._finished_at
 
 
 def test_finished_session_is_not_reused_by_player_token():

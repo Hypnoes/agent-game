@@ -29,6 +29,12 @@ from agent_game_server.games.guess_number import GuessNumberEngine
 from agent_game_server.games.liars_dice import LiarsDiceEngine
 from agent_game_server.manager import GameManager
 
+__version__ = "0.2.2"
+
+# 单次 state 调用的最长挂起时间（秒）。低于 client.py 的 60 秒传输超时，
+# 也低于 MCP 消费端默认的 60 秒工具调用超时，保证超时总是由本服务先发生。
+BLOCK_BUDGET = 55.0
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -43,7 +49,7 @@ async def lifespan(_: FastAPI):
             await asyncio.gather(*_background_tasks, return_exceptions=True)
 
 
-app = FastAPI(title="agent-game", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="agent-game", version=__version__, lifespan=lifespan)
 
 manager = GameManager()
 manager.register("guess_number", GuessNumberEngine)
@@ -51,9 +57,6 @@ manager.register("liars_dice", LiarsDiceEngine)
 
 # 模板目录
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
-
-# 内部共享密钥（启动时随机生成，防止 Agent 裸 HTTP 调 admin API）
-_ADMIN_TOKEN = _os.environ.get("AGENT_GAME_ADMIN_TOKEN", "")
 
 
 # ═══════════════════════════════════════════
@@ -167,6 +170,20 @@ async def game_action(session_id: str, request: Request):
         action = body.pop("action", None)
         if not action:
             raise HTTPException(status_code=400, detail="缺少 action 字段")
+        if action == "state":
+            # 非当前回合时在服务端挂起，Agent 只发起一次调用
+            pi = body.pop("player_index", 0)
+            timeout = min(float(body.pop("timeout", BLOCK_BUDGET)), BLOCK_BUDGET)
+            token = body.pop("player_token", "")
+            if hasattr(e, "wait_for_change"):
+                await e.wait_for_change(pi, timeout)
+            # 等待期间可能有对局因超时结束，立即结算，不必等后台轮询
+            manager.check_timeouts()
+            # 等待走的是快路径，绕过了 handle_action 的校验，这里补回：
+            # get_player_state 会返回私有骰子，不能让无 token 的调用方按索引取走
+            if hasattr(e, "_validate_player"):
+                e._validate_player(pi, token)
+            return e.get_player_state(pi)
         return e.handle_action(action, **body)
     except ValueError as ex:
         raise HTTPException(status_code=400, detail=str(ex))
@@ -184,9 +201,15 @@ def game_public_state(session_id: str):
 
 @app.get("/games/{session_id}/state/{player_index}")
 def game_player_state(session_id: str, player_index: int = 0):
+    """立即返回，不做任何等待。调试与管理界面的查询入口。"""
     e = manager.get(session_id)
     if not e:
         raise HTTPException(status_code=404, detail="session not found")
+    # 越界索引在引擎里会抛 IndexError（500），这里统一成 404。
+    # 单人游戏（如 guess_number）没有 players，不做这个检查。
+    players = getattr(e, "players", None)
+    if players is not None and not 0 <= player_index < len(players):
+        raise HTTPException(status_code=404, detail="player not found")
     return e.get_player_state(player_index)
 
 
@@ -228,7 +251,8 @@ def admin_dashboard():
 
 
 @app.post("/admin/reload-prompts")
-def reload_prompts():
+def reload_prompts(request: Request):
+    _check_admin_token(request)
     reloaded = []
     for engine_cls in manager._registry.values():
         if hasattr(engine_cls, "get_prompts"):

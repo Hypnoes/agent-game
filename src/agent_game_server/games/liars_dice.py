@@ -38,6 +38,7 @@ class Call:
 
 
 from agent_game_server.games.game_engine import GameEngine
+from agent_game_server.games.signal import ChangeSignal
 from agent_game_server.games.state_machine import StateMachine
 from agent_game_server.prompt import Prompt
 
@@ -89,6 +90,11 @@ class LiarsDiceEngine(GameEngine):
         self.loser: int | None = None
         self.created_at = datetime.now(UTC).isoformat()
         self.last_action = time.time()
+        # 回合判负时限（秒）。与 game_server 的等待预算 BLOCK_BUDGET 是两个数值：
+        # 这里决定多久不行动判负，那边决定单次 state 调用最多挂起多久。
+        self.turn_timeout = 60
+        # 状态变更信号，驱动 wait_for_change() 的阻塞等待
+        self._signal = ChangeSignal()
 
     @property
     def state(self) -> str:
@@ -124,7 +130,7 @@ class LiarsDiceEngine(GameEngine):
             },
             {
                 "name": "liars_dice_state",
-                "description": "查看大话骰对局当前状态。**注意：如果还没轮到你，这个调用会阻塞等待（最长约60秒）直到对手行动、游戏结束或超时。返回慢是正常的——不是出错，是服务器在等你对面的玩家决策。** 只需提供你的 player_index。",
+                "description": "查看大话骰对局当前状态。**注意：如果还没轮到你，这个调用会阻塞等待（最长 55 秒）直到对手行动、游戏结束或超时。返回慢是正常的——不是出错，是服务器在等你对面的玩家决策。等满 55 秒仍未轮到你时，返回的提示会告诉你继续等还是就此打住。** 只需提供你的 player_index。",
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -135,6 +141,12 @@ class LiarsDiceEngine(GameEngine):
                         "player_token": {
                             "type": "string",
                             "description": "你的身份 token",
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "description": "本次最多阻塞多少秒，缺省 55，上限 55",
+                            "default": 55,
+                            "maximum": 55,
                         },
                     },
                     "required": ["player_index"],
@@ -287,12 +299,15 @@ class LiarsDiceEngine(GameEngine):
     def check_timeout(self, now: float) -> dict | None:
         # 匹配超时
         if self.phase == "waiting" and now - self.last_action > 120:
+            self._signal.notify()
             return {"type": "lobby_timeout", "expired": True}
         # 回合超时
-        if self.phase == "bidding" and now - self.last_action > 60:
+        if self.phase == "bidding" and now - self.last_action > self.turn_timeout:
             self.loser = self.current_turn
             self.winner = (self.current_turn + 1) % (len(self.players) or 1)
             self._fsm.transition_to("finished")
+            # 判负同样要唤醒等待者，否则等待方要等满整个预算才知道对局已结束
+            self._signal.notify()
             return {"type": "turn_timeout", "loser": self.current_turn}
         return None
 
@@ -305,6 +320,7 @@ class LiarsDiceEngine(GameEngine):
         self._fsm.transition_to("bidding")
         self.current_turn = random.randint(0, len(self.players) - 1)
         self.last_action = time.time()
+        self._signal.notify()
 
     def _add_player(self, name: str) -> dict:
         """加一个玩家。人满自动开局。返回含 token 的元数据。"""
@@ -317,6 +333,9 @@ class LiarsDiceEngine(GameEngine):
 
         if len(self.players) >= self.player_count:
             self._start_game()
+        else:
+            # 人还没满，同样是一次状态变更：大厅里等待的玩家要看到人数变化
+            self._signal.notify()
 
         return {
             "player_index": idx,
@@ -352,6 +371,7 @@ class LiarsDiceEngine(GameEngine):
         self.call_history.append(new_call)
         self.current_turn = (self.current_turn + 1) % len(self.players)
         self.last_action = time.time()
+        self._signal.notify()
 
     def _challenge(self, player_index: int):
         self._check_turn(player_index)
@@ -381,6 +401,29 @@ class LiarsDiceEngine(GameEngine):
             )
         )
         self.last_action = time.time()
+        # 对局结束也是一次状态变更，唤醒可能还在等待的对手
+        self._signal.notify()
+
+    # ── 阻塞式等待 ──
+
+    async def wait_for_change(self, player_index: int, timeout: float) -> str:
+        """非当前回合时挂起，直到有人行动、对局结束或预算耗尽。
+
+        返回 "ready"（已轮到调用方或对局已结束，可立即取状态）、"changed"（被唤醒）
+        或 "timeout"（等满预算）。被取消时 CancelledError 直接向上抛。
+        """
+        # 必须先订阅再检查：若顺序反过来，对手在"检查"与"订阅"之间完成行动时
+        # notify() 找不到等待者，随后的等待会一直持续到超时。事件复用给 wait()，
+        # 使"订阅—等待"之间发生的行动同样不会丢。
+        ev = self._signal.subscribe()
+        try:
+            if self.phase == "finished":
+                return "ready"
+            if self.phase != "waiting" and self.current_turn == player_index:
+                return "ready"
+            return await self._signal.wait(timeout, ev)
+        finally:
+            self._signal.unsubscribe(ev)
 
     # ── 验证 ──
 
@@ -446,7 +489,7 @@ class LiarsDiceEngine(GameEngine):
 
     def _build_prompt(self, player_index: int) -> str:
         P = self.get_prompts()
-        remaining = 60 - (time.time() - self.last_action)
+        remaining = self.turn_timeout - (time.time() - self.last_action)
 
         if self.phase == "finished":
             winner = self.players[self.winner].name if self.winner is not None else "?"
@@ -475,7 +518,9 @@ class LiarsDiceEngine(GameEngine):
             if waited > 20:
                 patience = P.render("patience_20")
             if waited > 40:
-                patience = P.render("patience_40", remaining_time=60 - waited)
+                patience = P.render(
+                    "patience_40", remaining_time=int(self.turn_timeout - waited)
+                )
 
             call_str = (
                 f"{self.current_call.quantity}×{self.current_call.face}"
