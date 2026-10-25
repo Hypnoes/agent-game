@@ -6,7 +6,7 @@
 | GitHub Issue | [#2](https://github.com/Hypnoes/agent-game/issues/2) |
 | 前置 | [001 阻塞式对局等待](./001-blocking-state-wait.md)（[#1](https://github.com/Hypnoes/agent-game/issues/1)） |
 | 分支 | `issue-2-mcp-http`（基于 `issue-1-blocking-state`） |
-| 状态 | 实施中 |
+| 状态 | 已合并 |
 
 ## 背景
 
@@ -139,7 +139,7 @@ async with session_manager.run():
 |---|---|
 | `src/agent_game_mcp/`（整个目录） | 删除 |
 | `tests/test_client.py` | 删除，逻辑重写为 `tests/test_mcp_server.py` |
-| `pyproject.toml` 的 `[project.scripts]` | 删除 `agent-game-mcp` 入口 |
+| `pyproject.toml` 的 `[project.scripts]` | 删除本地客户端入口 |
 | `pyproject.toml` 的 wheel `packages` | 移除 `src/agent_game_mcp` |
 | `pyproject.toml` 的 `[tool.hermes.verify]` | `start` 与 `poll` 的端口由 8000 改为 8800，与 CLI 一致；`poll` 改为 `http://127.0.0.1:8800/mcp` |
 | `README.md` | 架构图去掉客户端子图；快速开始改为配置 MCP 客户端；工具名说明加上 `mcp__agent_game__` 前缀 |
@@ -185,7 +185,7 @@ async with session_manager.run():
 3. `GET /games/tools`、`POST /games/{sid}/action`、`/admin` 等既有端点行为不变。
 4. 在 DeepSeek Harness 中配置上述 MCP 客户端后，工具以 `mcp__agent_game__liars_dice_join` 形式出现并可调用。
 5. 两名 Agent 各自连接，完成一局大话骰，非当前回合者的 `state` 调用在对手行动后返回。
-6. `src/agent_game_mcp/` 目录不存在，仓库中不再出现 `agent-game-mcp` 命令。
+6. `src/agent_game_mcp/` 目录不存在，本地 stdio 客户端入口已从 `[project.scripts]` 移除。
 
 ## 已知边界
 
@@ -193,9 +193,23 @@ async with session_manager.run():
 
 **会话回收仍是定时清理。** `session_idle_timeout` 是空闲超时，不是即时回收。DELETE 之后条目会保留到超时或进程退出。
 
-**不保留兼容层。** 移除 `agent_game_mcp` 后，旧的 `{"mcpServers": {"agent-game": {"command": "agent-game-mcp"}}}` 配置将失效。目标就是彻底放弃本地客户端，因此不提供兼容路径；README 给出新旧配置对照。
+**不保留兼容层。** 移除 `agent_game_mcp` 后，以 `command` 启动本地进程的旧配置将失效。目标就是彻底放弃本地客户端，因此不提供兼容路径；README 给出新旧配置对照。
 
 ## 不在本次范围
 
 - 阻塞等待本身的实现，见 [001](./001-blocking-state-wait.md)。本次改动只把已有的等待语义搬到 MCP 传输层。
 - 认证。MCP 端点默认监听本机回环地址；若需对外暴露，鉴权方案另开任务。
+
+## 实施结果
+
+已实现并合入 `master`（`6921548`、`1dbc2be`）。落地时与本规划不同的地方：
+
+| 规划 | 实际落地 | 原因 |
+|---|---|---|
+| `timeout` 由 `_run_action` 内部按需解析，与 001 的等待逻辑"合并" | 解析统一收到 `config.parse_block_budget()`，MCP 与 REST 两条传输调用同一个函数 | 两边各写一遍时 `timeout=0` 的语义相反：MCP 侧 `or` 把 0 吞成 55 秒，REST 侧 0 就是 0 |
+| 会话缓存 `_MCP_SESSIONS` 无上限 | 增加 `config.MAX_MCP_SESSION_CACHE`（512），按插入顺序 FIFO 淘汰 | 键是 `mcp-session-id`，一次性连接的条目不会自己消失；SDK 的 `session_idle_timeout` 只回收 SDK 自己的会话，不通知这份缓存 |
+| 工具名解析"沿用 `_parse_tool_name` 前缀匹配" | 改为优先按引擎 `describe_tools()` 精确建索引，注册表未命中时才按已注册 `game_type` 前缀（最长优先）兜底 | "取前两段当前缀"对单段 `nim`、三段 `mega_liars_dice` 这类名字必然出错 |
+| 非当前回合的动作在没有会话时各自处理 | 只有 `start` / `join` 允许创建新会话，其余动作报错并提示先开局 | 否则漏传会话的 `bid` 会先建出一个空大厅再失败，留下无人认领的孤儿对局 |
+| 未提及显式 `session_id` 的身份语义 | 显式传 `session_id` 且是多人大局时必须同时带 `player_token`，否则拒绝 | 两者都能定位对局，但只有 token 能证明身份；只凭 `session_id` 就是替别人出手 |
+
+`pyproject.toml` 另有后续调整：`httpx` 从 `[project] dependencies` 移入 `[dependency-groups] dev`，因为迁移后服务端源码零 `httpx` import，只有 `tests/test_mcp_server.py` 用 `httpx.ASGITransport` 走 ASGI 内存传输。

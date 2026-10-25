@@ -5,7 +5,7 @@
 | 本地编号 | 001 |
 | GitHub Issue | [#1](https://github.com/Hypnoes/agent-game/issues/1) |
 | 分支 | `issue-1-blocking-state` |
-| 状态 | 实施中 |
+| 状态 | 已合并 |
 
 ## 背景
 
@@ -198,3 +198,18 @@ return engine.handle_action(action, **body)
 
 - MCP over HTTP 迁移与 `client.py` 移除，见 [002](./002-mcp-http-transport.md)。
 - 大厅匹配阶段的阻塞行为只做与回合等待一致的接线，不改变 120 秒匹配超时的语义。
+
+## 实施结果
+
+已实现并合入 `master`（`be51376`）。落地时与本规划不同的地方：
+
+| 规划 | 实际落地 | 原因 |
+|---|---|---|
+| `wait_for_change` 被唤醒即返回 | 改成 `while True` 循环，每轮重新判断 `_is_my_turn_or_over`，只有剩余预算耗尽才返回 `"timeout"` | `notify()` 是全局广播。规划只考虑了两名玩家，3 人及以上时第三名玩家会被别人的叫数误唤醒；单次唤醒就返回会让 Agent 以为自己可以行动 |
+| 等待条件 `phase != "waiting" and current_turn == player_index` | 提取成 `_is_my_turn_or_over()`：`phase == "finished"` 或 `phase == "bidding" and current_turn == player_index` | 规划里的条件把 `finished` 当成"轮到自己"，且没有单独表达"对局结束"这一出口 |
+| 服务端 `timeout = min(float(...), BLOCK_BUDGET)` | 解析移到 `config.parse_block_budget()`，MCP 与 REST 两条传输共用 | 两处各写一遍时语义相反，见下一行 |
+| 未预见两个传输的语义分叉 | REST 的 `min(float(...), BLOCK_BUDGET)` 让 `timeout=0` 就是 0，MCP 的 `float(args.pop("timeout", None) or BLOCK_BUDGET)` 让 0 变成 55 | `or` 把 0 当成缺省值。现在 `0` 统一表示"本次不等待"，`None`/省略统一表示用满预算 |
+| REST 的 `state` 先等待、后由引擎校验 | 先解析入参、再用 `_state_player_error()` 校验玩家，最后才进 `wait_for_change` | 否则越界索引或错误 token 会先白等满 55 秒才报错 |
+| 未涉及多人淘汰 | 引擎新增 3 人及以上的掉骰淘汰：输一轮只掉一颗骰子，掉光才出局；只剩 2 名存活玩家时仍是突然死亡 | 3 人局若沿用"输一轮即出局"，第 2 轮就只剩两人，第三人没有任何对抗空间 |
+
+`ChangeSignal.wait()` 还多了一个 `ev` 参数，允许调用方传入自己在循环外 `subscribe()` 的事件，避免"检查与进入等待之间"发生的 `notify()` 被丢掉。`tests/test_wait.py` 与 `tests/test_mcp_server.py::test_timeout_zero_vs_absent_end_to_end` 覆盖上述行为。

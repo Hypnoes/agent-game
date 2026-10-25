@@ -676,9 +676,18 @@ class LiarsDiceEngine(GameEngine):
     # ── Prompt 生成（模板渲染，修改 YAML 后调 reload() 热更新）──
 
     def _build_prompt(self, player_index: int) -> str:
+        # 函数内 import：等待预算的权威来源是 config 模块的全局，而它会被运维/测试
+        # 在运行时改写；import 到模块顶层就是一份固化副本，读不到改写后的值。
+        from agent_game_server import config
+
         P = self.get_prompts()
+        # 两条互不相同的时间轴，别混用：
+        #   wait_budget  = 一次 state 调用最多挂起多久（到点返回文本，由调用方决定再来不来）
+        #   turn_timeout = 当前回合多久不行动判负
+        wait_budget = config.BLOCK_BUDGET
+        turn_timeout = self.turn_timeout
         # 剩余时间只用于展示：超时后不能显示成负数
-        remaining = max(0, int(self.turn_timeout - (time.time() - self.last_action)))
+        remaining = max(0, int(turn_timeout - (time.time() - self.last_action)))
 
         if self.phase == "finished":
             winner = self.players[self.winner].name if self.winner is not None else "?"
@@ -697,6 +706,7 @@ class LiarsDiceEngine(GameEngine):
                 players=len(self.players),
                 needed=self.player_count,
                 waited=int(time.time() - self.last_action),
+                wait_budget=wait_budget,
             )
 
         # 走到这里一定是 bidding：先挡住越界/负索引，否则负索引会把对手的骰子
@@ -708,11 +718,11 @@ class LiarsDiceEngine(GameEngine):
             waited = int(time.time() - self.last_action)
             patience = ""
             if waited > 20:
-                patience = P.render("patience_20")
+                patience = P.render("patience_20", turn_timeout=turn_timeout)
             if waited > 40:
                 patience = P.render(
                     "patience_40",
-                    remaining_time=max(0, int(self.turn_timeout - waited)),
+                    remaining_time=max(0, int(turn_timeout - waited)),
                 )
 
             call_str = (
@@ -728,6 +738,11 @@ class LiarsDiceEngine(GameEngine):
                 call_str=call_str,
                 dice=self.players[player_index].dice,
                 player_index=player_index,
+                # 对手回合已经进行了多久——不是"你被阻塞了多久"。get_player_state
+                # 是纯视图，它不可能知道某一次调用究竟等了多少秒（立即返回的 GET
+                # 与挂满预算的 state 走同一条渲染路径）。
+                elapsed=waited,
+                wait_budget=wait_budget,
             )
 
         # 轮到自己

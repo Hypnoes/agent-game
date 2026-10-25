@@ -314,9 +314,19 @@ def _state_payload(sid, token, **extra):
     return {"action": "state", "player_index": 0, "player_token": token, **extra}
 
 
-def test_state_timeout_null_uses_default_budget(client):
-    """"timeout": null 曾因 float(None) 抛 TypeError 变成 500。"""
+def test_state_timeout_null_uses_default_budget(client, monkeypatch):
+    """"timeout": null 曾因 float(None) 抛 TypeError 变成 500。
+
+    两处让它确定且快速：
+    - 预算压到 0.05 秒：本用例只验证 null 不报错，无需真的等满默认预算。
+    - 先手固定成令牌所属玩家：`_start_game` 用 `random.choice` 选先手，
+      轮到该玩家时 `state` 立即返回，否则会真的挂满整个预算，使套件耗时
+      在 9 秒与 64 秒之间随机波动。
+    """
+    monkeypatch.setattr("agent_game_server.config.BLOCK_BUDGET", 0.05)
     sid, a, _b = _started_dice(client)
+    engine = game_server.manager.get(sid)
+    engine.current_turn = engine._find_player_by_token(a)
     resp = client.post(f"/games/{sid}/action", json=_state_payload(sid, a, timeout=None))
     assert resp.status_code == 200
 
