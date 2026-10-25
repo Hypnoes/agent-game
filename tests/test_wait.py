@@ -33,7 +33,10 @@ def test_ready_returns_immediately():
 
 
 def test_wakes_on_opponent_bid():
-    """后台任务等待期间对手叫数，0.1 秒内返回 "changed"。"""
+    """后台任务等待期间对手叫数并轮到它，0.1 秒内返回 "ready"。
+    返回值语义：只有真正轮到自己（或对局结束）才返回 "ready"；
+    别人行动导致的唤醒会重新进入等待，不会被误当成「该我行动了」。
+    """
 
     async def scenario():
         e = _started_engine()
@@ -41,7 +44,7 @@ def test_wakes_on_opponent_bid():
 
         async def opponent_bids():
             await asyncio.sleep(0.01)
-            e.handle_action("bid", player_index=e.current_turn, quantity=2, face=3)
+            e.handle_action("bid", player_index=e.current_turn, quantity=2, face=3, player_token=e.players[e.current_turn].token)
 
         async with asyncio.TaskGroup() as tg:
             bidder = tg.create_task(opponent_bids())
@@ -53,7 +56,7 @@ def test_wakes_on_opponent_bid():
         return result, elapsed
 
     result, elapsed = asyncio.run(scenario())
-    assert result == "changed"
+    assert result == "ready"
     assert elapsed < 0.1
 
 
@@ -80,7 +83,7 @@ def test_no_lost_wakeup():
         started = time.monotonic()
 
         ev = e._signal.subscribe()  # 模拟"已订阅、还没进入等待"的中间态
-        e.handle_action("bid", player_index=e.current_turn, quantity=2, face=3)
+        e.handle_action("bid", player_index=e.current_turn, quantity=2, face=3, player_token=e.players[e.current_turn].token)
         try:
             result = await e._signal.wait(5.0, ev)
         finally:
@@ -89,7 +92,7 @@ def test_no_lost_wakeup():
         return result, time.monotonic() - started
 
     result, elapsed = asyncio.run(scenario())
-    assert result == "changed"
+    assert result == "changed", "ChangeSignal 原语返回 changed；轮次判定在 wait_for_change 里"
     assert elapsed < 0.1
 
 
@@ -153,10 +156,10 @@ def test_multi_waiter_all_woken():
         await asyncio.sleep(0.01)  # 两个都挂起
         pending = e._signal.waiter_count
 
-        e.handle_action("bid", player_index=e.current_turn, quantity=2, face=3)
+        e.handle_action("bid", player_index=e.current_turn, quantity=2, face=3, player_token=e.players[e.current_turn].token)
         results = await asyncio.gather(*tasks)
         return pending, results
 
     pending, results = asyncio.run(scenario())
     assert pending == 2
-    assert results == ["changed", "changed"]
+    assert results == ["ready", "ready"]

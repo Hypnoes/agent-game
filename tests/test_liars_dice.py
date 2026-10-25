@@ -7,6 +7,21 @@ import pytest
 from agent_game_server.games.liars_dice import LiarsDiceEngine
 
 
+def act(e: LiarsDiceEngine, action: str, **params):
+    """调用 handle_action 并自动补上该玩家的 token（state/bid/challenge 必填）。"""
+    if "player_index" in params:
+        params.setdefault("player_token", e.players[params["player_index"]].token)
+    return e.handle_action(action, **params)
+
+
+def started(player_count: int = 2, dice_per_player: int = 5) -> LiarsDiceEngine:
+    """开局后的引擎（所有玩家都带 5 骰）。"""
+    e = LiarsDiceEngine(player_count=player_count, dice_per_player=dice_per_player)
+    for i in range(player_count):
+        e.handle_action("join", player_name=f"P{i}")
+    return e
+
+
 def test_describe_tools():
     tools = LiarsDiceEngine.describe_tools()
     assert len(tools) == 4
@@ -46,7 +61,7 @@ def test_first_bid_always_valid():
     e.handle_action("join", player_name="Alice")
     e.handle_action("join", player_name="Bob")
     turn = e.current_turn
-    e.handle_action("bid", player_index=turn, quantity=2, face=3)
+    act(e, "bid", player_index=turn, quantity=2, face=3)
     assert e.current_call is not None
     assert e.current_call.quantity == 2
 
@@ -56,9 +71,9 @@ def test_higher_bid_valid():
     e.handle_action("join", player_name="Alice")
     e.handle_action("join", player_name="Bob")
     turn = e.current_turn
-    e.handle_action("bid", player_index=turn, quantity=2, face=3)
+    act(e, "bid", player_index=turn, quantity=2, face=3)
     next_turn = e.current_turn
-    e.handle_action("bid", player_index=next_turn, quantity=3, face=3)
+    act(e, "bid", player_index=next_turn, quantity=3, face=3)
     assert e.current_call is not None
     assert e.current_call.quantity == 3
 
@@ -68,10 +83,10 @@ def test_lower_bid_invalid():
     e.handle_action("join", player_name="Alice")
     e.handle_action("join", player_name="Bob")
     turn = e.current_turn
-    e.handle_action("bid", player_index=turn, quantity=3, face=3)
+    act(e, "bid", player_index=turn, quantity=3, face=3)
     next_turn = e.current_turn
     with pytest.raises(ValueError, match="必须比上家大"):
-        e.handle_action("bid", player_index=next_turn, quantity=2, face=4)
+        act(e, "bid", player_index=next_turn, quantity=2, face=4)
 
 
 def test_challenge():
@@ -79,9 +94,9 @@ def test_challenge():
     e.handle_action("join", player_name="Alice")
     e.handle_action("join", player_name="Bob")
     turn = e.current_turn
-    e.handle_action("bid", player_index=turn, quantity=1, face=3)
+    act(e, "bid", player_index=turn, quantity=1, face=3)
     next_turn = e.current_turn
-    state = e.handle_action("challenge", player_index=next_turn)
+    state = act(e, "challenge", player_index=next_turn)
     assert e.phase == "finished"
     assert "winner_name" in state["private"]
 
@@ -91,7 +106,7 @@ def test_bid_message():
     e.handle_action("join", player_name="Alice")
     e.handle_action("join", player_name="Bob")
     turn = e.current_turn
-    e.handle_action("bid", player_index=turn, quantity=2, face=3, message="bluff")
+    act(e, "bid", player_index=turn, quantity=2, face=3, message="bluff")
     assert e.current_call is not None
     assert e.current_call.message == "bluff"
 

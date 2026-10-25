@@ -665,7 +665,9 @@ def test_timeout_zero_vs_absent_end_to_end():
 
     async def timed(arguments):
         started = time.monotonic()
-        await _run_action(engine, "state", dict(arguments))
+        # 引擎要求身份 token：等待走快路径，但等待结束后仍交给 handle_action 校验
+        payload = {"player_token": engine.players[not_turn].token, **arguments}
+        await _run_action(engine, "state", payload)
         return time.monotonic() - started
 
     skipped = asyncio.run(timed({"player_index": not_turn, "timeout": 0}))
