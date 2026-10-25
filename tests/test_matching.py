@@ -151,9 +151,14 @@ def test_token_does_not_rejoin_finished_game():
     sid, engine = gm.create("liars_dice")
     token = engine.handle_action("join", player_name="Alice")["player_token"]
     engine.handle_action("join", player_name="Bob")
+    # 身份 token 必填（P0 修复）：替某玩家行动必须带该玩家自己的 token
+    tokens = {i: p.token for i, p in enumerate(engine.players)}
     turn = engine.current_turn
-    engine.handle_action("bid", player_index=turn, quantity=1, face=3)
-    engine.handle_action("challenge", player_index=engine.current_turn)
+    engine.handle_action(
+        "bid", player_index=turn, quantity=1, face=3, player_token=tokens[turn]
+    )
+    challenger = engine.current_turn
+    engine.handle_action("challenge", player_index=challenger, player_token=tokens[challenger])
     assert engine.phase == "finished"
 
     new_sid, _new_engine = gm.create("liars_dice", player_token=token)
