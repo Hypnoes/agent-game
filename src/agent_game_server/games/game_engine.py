@@ -64,6 +64,18 @@ class GameEngine(Protocol):
 
     if TYPE_CHECKING:
 
+        async def wait_for_change(self, player_index: int, timeout: float) -> str:
+            """可选方法。回合制游戏实现它，让非当前回合的 state 调用在服务端挂起。
+
+            返回 "ready"（已轮到调用方或对局已结束）、"changed"（被唤醒）或
+            "timeout"（等满预算）。被取消时应让 CancelledError 向上抛出。
+
+            单人即时游戏（如 guess_number）不实现该方法。调用方必须用
+            getattr(engine, "wait_for_change", None) 探测——本协议在运行时
+            不提供任何方法体，所以 hasattr 是可信的，但 getattr 写法更稳妥。
+            """
+            ...
+
         @classmethod
         def describe_tools(cls) -> list[dict]:
             """返回 MCP 工具定义列表 [{name, description, input_schema}]。

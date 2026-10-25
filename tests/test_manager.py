@@ -166,6 +166,29 @@ def test_remove():
     assert len(gm.list_sessions()) == 0
 
 
+def test_finished_game_reclaimed_after_retention():
+    gm = GameManager()
+    gm.register("rejoin_game", RejoinEngine)
+    done_sid, done_engine = gm.create("rejoin_game")
+    done_engine.phase = "finished"
+    fresh_sid, fresh_engine = gm.create("rejoin_game")
+    fresh_engine.phase = "finished"
+
+    now = time.time()
+    # 首次检查只为 done_engine 记下结束时刻，两个都还在
+    gm.check_timeouts(now=now)
+    assert gm.get(done_sid) is not None
+    assert gm.get(fresh_sid) is not None
+
+    # 把 done_engine 的结束时刻推到保留期之外，只回收它
+    gm._finished_at[done_sid] = now - FINISHED_RETENTION - 1
+    gm.check_timeouts(now=now)
+    assert gm.get(done_sid) is None
+    assert gm.get(fresh_sid) is not None
+    assert done_sid not in gm._created_at
+    assert done_sid not in gm._finished_at
+
+
 def test_remove_clears_all_bookkeeping():
     gm = GameManager()
     gm.register("rejoin_game", RejoinEngine)
@@ -180,7 +203,6 @@ def test_remove_clears_all_bookkeeping():
     assert sid not in gm._engines
     assert sid not in gm._created_at
     assert sid not in gm._finished_at
-
 
 # ── 跨游戏类型的 token 复用（缺陷 1）──
 

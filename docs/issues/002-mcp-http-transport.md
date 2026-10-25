@@ -3,10 +3,10 @@
 | 项 | 值 |
 |---|---|
 | 本地编号 | 002 |
-| GitHub Issue | 待创建后回填 |
-| 前置 | [001 阻塞式对局等待](./001-blocking-state-wait.md) |
-| 分支 | `issue-<编号>-mcp-http` |
-| 状态 | 规划完成，未开工 |
+| GitHub Issue | [#2](https://github.com/Hypnoes/agent-game/issues/2) |
+| 前置 | [001 阻塞式对局等待](./001-blocking-state-wait.md)（[#1](https://github.com/Hypnoes/agent-game/issues/1)） |
+| 分支 | `issue-2-mcp-http`（基于 `issue-1-blocking-state`） |
+| 状态 | 实施中 |
 
 ## 背景
 

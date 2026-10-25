@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_game_server import game_server
+from agent_game_server.config import parse_block_budget
 from agent_game_server.games.guess_number import GuessNumberEngine
 from agent_game_server.games.liars_dice import LiarsDiceEngine
 from agent_game_server.manager import GameManager
@@ -92,6 +93,9 @@ def test_create_game_forwards_request_params():
 def client(monkeypatch):
     """一个干净的 manager + TestClient，用例结束后恢复模块级 manager。
 
+    `create_app()` 每次新建 app：`StreamableHTTPSessionManager.run()` 只能在
+    同一实例上进入一次，复用模块级 app 会在第二个用例抛 RuntimeError。
+
     raise_server_exceptions=False：把服务端未捕获异常变成 500 响应，
     这样断言"不是 500"才有意义（否则异常会直接冒到测试里）。
     """
@@ -99,7 +103,7 @@ def client(monkeypatch):
     gm.register("guess_number", GuessNumberEngine)
     gm.register("liars_dice", LiarsDiceEngine)
     monkeypatch.setattr(game_server, "manager", gm)
-    with TestClient(game_server.app, raise_server_exceptions=False) as c:
+    with TestClient(game_server.create_app(), raise_server_exceptions=False) as c:
         yield c
 
 
@@ -208,9 +212,11 @@ class _SpyEngine:
     def phase(self):
         return self.status
 
-    # 模拟 issue-1 的阻塞语义：真实实现里等待就发生在这一步
-    def wait_for_change(self, player_index: int, timeout: float):
+    # 模拟 issue-1 的阻塞语义：真实实现里等待就发生在这一步。
+    # 必须是 async——服务端用 await 调用它，同步函数会让 await 直接报错。
+    async def wait_for_change(self, player_index: int, timeout: float):
         self.waits.append((player_index, timeout))
+        return "changed"
 
     def handle_action(self, action: str, **params):
         self.actions.append(action)
@@ -242,8 +248,15 @@ def test_state_action_validates_before_any_wait(client):
     assert engine.actions == [], "非法索引仍然进了引擎动作分发"
 
 
-def test_state_action_valid_input_still_reaches_engine(client):
-    """对照组：合法请求正常落到引擎，说明上面的断言不是靠拒绝一切通过的。"""
+def test_state_action_valid_input_still_reaches_engine(client, monkeypatch):
+    """对照组：合法请求被放行并返回该玩家的状态，说明上面的断言不是靠拒绝一切通过的。
+
+    state 走的是快路径（校验 → 等待 → get_player_state），不经过
+    `handle_action`，所以这里断言"拿到了玩家视角"而不是"进了动作分发"。
+    探针引擎的 `phase` 是 "waiting"，等待会真的挂满预算，因此把预算压到
+    0.05 秒，让这条用例只验证"校验放行"。
+    """
+    monkeypatch.setattr("agent_game_server.config.BLOCK_BUDGET", 0.05)
     game_server.manager.register("spy", _SpyEngine)
     sid = client.post("/games/spy", json={}).json()["session_id"]
     engine = game_server.manager.get(sid)
@@ -253,7 +266,8 @@ def test_state_action_valid_input_still_reaches_engine(client):
         json={"action": "state", "player_index": 1, "player_token": "tok-b"},
     )
     assert resp.status_code == 200
-    assert engine.actions == ["state"]
+    assert resp.json() == {"your_index": 1}
+    assert engine.actions == [], "state 快路径不应再走 handle_action"
 
 
 def test_state_action_with_invalid_index_fails_fast(client):
@@ -328,14 +342,18 @@ def test_state_timeout_negative_clamps_to_zero(client):
 
 
 def test_state_timeout_above_budget_is_clamped(client, monkeypatch):
-    """超上限夹紧到预算；调小预算以免真的等待。"""
-    monkeypatch.setattr(game_server, "BLOCK_BUDGET", 0.05)
+    """超上限夹紧到预算；调小预算以免真的等待。
+
+    必须 patch `agent_game_server.config.BLOCK_BUDGET`：解析器在调用时读的是
+    config 模块的全局，`game_server.BLOCK_BUDGET` 只是 import 时的副本。
+    """
+    monkeypatch.setattr("agent_game_server.config.BLOCK_BUDGET", 0.05)
     sid, a, _b = _started_dice(client)
     started = time.perf_counter()
     resp = client.post(f"/games/{sid}/action", json=_state_payload(sid, a, timeout=999))
     elapsed = time.perf_counter() - started
     assert resp.status_code == 200
-    assert elapsed < 0.5
+    assert elapsed < 0.5, f"timeout=999 夹紧到 0.05s 却等了 {elapsed:.2f}s"
 
 
 def test_state_timeout_non_numeric_is_400(client):
@@ -358,7 +376,7 @@ def test_state_timeout_non_numeric_is_400(client):
     ],
 )
 def test_parse_timeout_numeric_contract(raw, expected):
-    assert game_server._parse_timeout(raw) == expected
+    assert parse_block_budget(raw) == expected
 
 
 @pytest.mark.parametrize(
@@ -368,12 +386,23 @@ def test_parse_timeout_numeric_contract(raw, expected):
 )
 def test_parse_timeout_rejects_non_numeric(raw):
     with pytest.raises(ValueError):
-        game_server._parse_timeout(raw)
+        parse_block_budget(raw)
 
 
-def test_parse_timeout_honours_default():
-    assert game_server._parse_timeout(None, default=2.0) == 2.0
-    assert game_server._parse_timeout(99, default=2.0) == 2.0
+def test_parse_timeout_honours_default(monkeypatch):
+    """default 只在参数缺省时生效；显式数值照常解析。
+
+    上限永远是 `BLOCK_BUDGET`（不是 default）：default 只回答「没给这个参数
+    时用多少秒」，不能顺手把上限也降下来，否则 default 较小的调用方会意外
+    得到比预期更短的预算。这里把预算调小来验证上限仍然是它。
+    """
+    monkeypatch.setattr(
+        "agent_game_server.config.BLOCK_BUDGET", 2.0, raising=True
+    )
+    assert parse_block_budget(None, default=1.0) == 1.0
+    assert parse_block_budget(0, default=1.0) == 0.0
+    # 显式 99 被夹到当前预算 2.0，而不是 default 1.0
+    assert parse_block_budget(99, default=1.0) == 2.0
 
 
 # ── 5. Admin 鉴权 ──

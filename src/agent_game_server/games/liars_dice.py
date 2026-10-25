@@ -52,6 +52,7 @@ class Call:
 
 
 from agent_game_server.games.game_engine import GameEngine
+from agent_game_server.games.signal import ChangeSignal
 from agent_game_server.games.state_machine import StateMachine
 from agent_game_server.prompt import Prompt
 
@@ -107,6 +108,11 @@ class LiarsDiceEngine(GameEngine):
         self.loser: int | None = None
         self.created_at = datetime.now(UTC).isoformat()
         self.last_action = time.time()
+        # 回合判负时限（秒）。与 game_server 的等待预算 BLOCK_BUDGET 是两个数值：
+        # 这里决定多久不行动判负，那边决定单次 state 调用最多挂起多久。
+        self.turn_timeout = 60
+        # 状态变更信号，驱动 wait_for_change() 的阻塞等待
+        self._signal = ChangeSignal()
 
     @property
     def state(self) -> str:
@@ -123,12 +129,9 @@ class LiarsDiceEngine(GameEngine):
         """通知所有等待者"局面变了"。
 
         阻塞式 state 等待（`wait_for_change` / `ChangeSignal`）依赖这个信号，
-        所以每一条会改变局面的路径都必须调用它。信号对象在另一条分支上引入，
-        这里用 getattr 探测：没有信号时是 no-op，合并后自动生效。
+        所以每一条会改变局面的路径都必须调用它。
         """
-        signal = getattr(self, "_signal", None)
-        if signal is not None:
-            signal.notify()
+        self._signal.notify()
 
     def is_in(self, *states: str) -> bool:
         return self._fsm.is_in(*states)
@@ -155,7 +158,7 @@ class LiarsDiceEngine(GameEngine):
             },
             {
                 "name": "liars_dice_state",
-                "description": "查看大话骰对局当前状态。**注意：如果还没轮到你，这个调用会阻塞等待（最长约60秒）直到对手行动、游戏结束或超时。返回慢是正常的——不是出错，是服务器在等你对面的玩家决策。** 必须带上你的 player_index 和 player_token。",
+                "description": "查看大话骰对局当前状态。**注意：如果还没轮到你，这个调用会阻塞等待（最长 55 秒）直到对手行动、游戏结束或超时。返回慢是正常的——不是出错，是服务器在等你对面的玩家决策。等满 55 秒仍未轮到你时，返回的提示会告诉你继续等还是就此打住。** 必须带上你的 player_index 和 player_token。",
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -166,6 +169,12 @@ class LiarsDiceEngine(GameEngine):
                         "player_token": {
                             "type": "string",
                             "description": "你的身份 token（必填）",
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "description": "本次最多阻塞多少秒，缺省 55，上限 55",
+                            "default": 55,
+                            "maximum": 55,
                         },
                     },
                     "required": ["player_index", "player_token"],
@@ -335,6 +344,7 @@ class LiarsDiceEngine(GameEngine):
             self.last_action = now
             if not self._eliminate(loser):
                 self.current_turn = self._next_alive_index(loser)
+            # 判负同样要唤醒等待者，否则等待方要等满整个预算才知道对局已结束
             self._notify_state_change()
             return {"type": "turn_timeout", "loser": loser}
         return None
@@ -456,6 +466,46 @@ class LiarsDiceEngine(GameEngine):
             self.current_turn = self._next_turn_after(loser)
         # 掉骰、出局、结束对局都是状态变更，唤醒可能还在等待的对手
         self._notify_state_change()
+
+    # ── 阻塞式等待 ──
+
+    async def wait_for_change(self, player_index: int, timeout: float) -> str:
+        """非当前回合时挂起，直到轮到自己、对局结束或预算耗尽。
+
+        返回 "ready"（已轮到调用方或对局已结束，可立即取状态）、"changed"（轮到了）
+        或 "timeout"（等满预算）。被取消时 CancelledError 直接向上抛。
+
+        多于两人时 `notify()` 是全局广播：别人叫数也会唤醒我，而我仍未轮到时
+        不能就这样返回——那会让调用方误以为可以行动。所以这里循环重等，直到
+        条件真正成立或剩余预算耗尽。
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            # 必须先订阅再检查：若顺序反过来，对手在"检查"与"订阅"之间完成行动时
+            # notify() 找不到等待者，随后的等待会一直持续到超时。
+            ev = self._signal.subscribe()
+            try:
+                if self._is_my_turn_or_over(player_index):
+                    return "ready"
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return "timeout"
+                outcome = await self._signal.wait(remaining, ev)
+            finally:
+                self._signal.unsubscribe(ev)
+            if outcome == "timeout":
+                return "timeout"
+            # 被唤醒：可能只是别人行动，循环重判，未轮到我就继续等剩下的预算
+
+    def _is_my_turn_or_over(self, player_index: int) -> bool:
+        """等待条件：轮到我了，或对局已经结束。
+
+        多于两人时 `notify()` 是全局广播——别人叫数也会唤醒我。所以醒来后
+        必须重新判断这个条件，否则会被假唤醒骗去"行动"。
+        """
+        if self.phase == "finished":
+            return True
+        return self.phase == "bidding" and self.current_turn == player_index
 
     # ── 淘汰 ──
 

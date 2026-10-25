@@ -3,9 +3,9 @@
 | 项 | 值 |
 |---|---|
 | 本地编号 | 001 |
-| GitHub Issue | 待创建后回填 |
-| 分支 | `issue-<编号>-blocking-state` |
-| 状态 | 规划完成，未开工 |
+| GitHub Issue | [#1](https://github.com/Hypnoes/agent-game/issues/1) |
+| 分支 | `issue-1-blocking-state` |
+| 状态 | 实施中 |
 
 ## 背景
 

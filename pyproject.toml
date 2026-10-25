@@ -17,18 +17,17 @@ dependencies = [
     "websockets>=17.0.1",
 ]
 
-# ── 两个 CLI 入口 ──
+# ── CLI 入口（MCP 端点由服务端自身暴露，不再有本地客户端命令）──
 [project.scripts]
-agent-game-mcp = "agent_game_mcp.client:main"
 agent-game-server = "agent_game_server.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-# ── 两个子包都打包进 wheel ──
+# ── 子包打包进 wheel ──
 [tool.hatch.build.targets.wheel]
-packages = ["src/agent_game_mcp", "src/agent_game_server"]
+packages = ["src/agent_game_server"]
 
 [dependency-groups]
 dev = [
@@ -41,5 +40,5 @@ testpaths = ["tests"]
 [tool.hermes.verify]
 bootstrap = "uv sync"
 test = "uv run pytest"
-start = "uv run uvicorn agent_game_server.game_server:app --host 0.0.0.0 --port 8000"
-poll = "http://127.0.0.1:8000/games/tools"
+start = "uv run uvicorn agent_game_server.game_server:app --host 0.0.0.0 --port 8800"
+poll = "http://127.0.0.1:8800/mcp"

@@ -2,6 +2,7 @@
 agent-game Game Server — 单端口统一 API。
 
 Agent API:
+    POST /mcp                            → MCP over Streamable HTTP 端点
     GET  /games/tools                    → MCP 工具定义
     POST /games/{game_type}              → 创建 session
     POST /games/{session_id}/action      → 执行动作
@@ -24,32 +25,19 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from starlette.routing import Route
 
+from agent_game_server.config import BLOCK_BUDGET, __version__, parse_block_budget
 from agent_game_server.games.game_engine import GameEngine
 from agent_game_server.games.guess_number import GuessNumberEngine
 from agent_game_server.games.liars_dice import LiarsDiceEngine
 from agent_game_server.manager import GameManager
+from agent_game_server.mcp_server import build_mcp_server
 
 logger = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    task = asyncio.create_task(
-        _poll_and_broadcast(_admin_broadcast), name="admin-state-poller"
-    )
-    _admin_broadcast.track(task)
-    try:
-        yield
-    finally:
-        # 只取消本 lifespan 自己登记的任务。全局集合会让两个 app 实例互相
-        # 取消对方的后台任务：内层 shutdown 把外层的 poller 也干掉。
-        await _admin_broadcast.cancel_all()
-
-
-app = FastAPI(title="agent-game", version="0.2.0", lifespan=lifespan)
 
 manager = GameManager()
 manager.register("guess_number", GuessNumberEngine)
@@ -60,16 +48,9 @@ _TEMPLATE_DIR = Path(__file__).parent / "templates"
 
 # 对局状态里属于「秘密信息」的顶层键：猜数字的 target、大话骰的全场骰子。
 # Agent 能拿到的公开状态必须剥掉它们，否则游戏本身失去意义。
-# 只有 /admin 系列接口（{_check_admin_token} 鉴权通过后）才允许看到，
+# 只有 /admin 系列接口（_check_admin_token 鉴权通过后）才允许看到，
 # 那里是秘密信息唯一的展示出口。见 game_public_state()。
 SECRET_STATE_KEYS = frozenset({"target", "all_dice"})
-
-# 单次 state 调用的最长挂起时间（秒）。
-# 合并 fix/mcp 后应改为从 agent_game_server.config 导入——那边的
-# config.parse_block_budget() 是这条预算的单一来源，本文件里的
-# _parse_timeout() 到时候一并替换掉。本分支没有 config.py（从 master 分出），
-# 因此这里先就地定义同一份契约，保证两条传输路径行为一致。
-BLOCK_BUDGET = 55.0
 
 # Admin 内部查询密钥。导入时解析一次，之后全程用这个值：
 # - 有 AGENT_GAME_ADMIN_TOKEN 就用它（部署时显式配置）
@@ -88,38 +69,6 @@ def _token_matches(presented: str) -> bool:
     return secrets.compare_digest(
         presented.encode("utf-8"), _ADMIN_TOKEN.encode("utf-8")
     )
-
-
-def _parse_timeout(raw=None, default: float | None = None) -> float:
-    """解析 REST 层的 `timeout` 参数，返回本次 state 调用最多挂起多少秒。
-
-    契约与 fix/mcp 分支的 `agent_game_server.config.parse_block_budget`
-    **完全一致**，合并后本函数应整体替换为对它的调用：
-
-    - 缺省 / None      → default（再缺省则 BLOCK_BUDGET，即 55）
-    - 数值             → 夹紧到 [0, BLOCK_BUDGET]；0 表示「不等待」
-    - 非数值           → 抛 ValueError（由 game_action 的 400 兜底接住）
-
-    为什么要自己解析：`float(None)` 会抛 TypeError，也就是 `"timeout": null`
-    直接变成 500；而 MCP 路径上同一参数在 null 时会回落成默认预算。
-    两条传输路径对同一参数必须同义，否则合并后玩家看到的还是两套行为。
-    """
-    budget = BLOCK_BUDGET if default is None else default
-
-    if raw is None:
-        return budget
-    # bool 是 int 的子类，但 `"timeout": true` 是误用，不能当成 1 秒
-    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-        raise ValueError(f"timeout 必须是数值，收到: {raw!r}")
-
-    value = float(raw)
-    # NaN 自我不等；±inf 夹紧后无意义。两者都按「非法数值」处理，
-    # 否则 NaN 会让 min() 返回 NaN，等待逻辑拿到一个无法比较的预算。
-    if value != value or value in (float("inf"), float("-inf")):
-        raise ValueError(f"timeout 必须是有限数值，收到: {raw!r}")
-
-    return max(0.0, min(value, budget))
-
 
 # ═══════════════════════════════════════════
 # WebSocket 广播
@@ -254,17 +203,38 @@ async def _poll_and_broadcast(broadcast: AdminBroadcast | None = None):
             logger.exception("admin state poll iteration failed; continuing")
 
 
-@app.websocket("/admin/ws")
+# ═══════════════════════════════════════════
+# 路由（挂在 router 上，便于 create_app 重复构建）
+# ═══════════════════════════════════════════
+
+router = APIRouter()
+
+
+def _broadcast_of(app: FastAPI) -> AdminBroadcast:
+    """取某个 app 实例的广播状态。
+
+    `create_app()` 把实例挂在 `app.state.admin_broadcast` 上；没有工厂
+    （直接使用模块级 `_admin_broadcast`）的旧路径回落到模块级实例。
+    """
+    broadcast = getattr(app.state, "admin_broadcast", None)
+    if isinstance(broadcast, AdminBroadcast):
+        return broadcast
+    return _admin_broadcast
+
+
+@router.websocket("/admin/ws")
 async def admin_websocket(ws: WebSocket):
+    """接受一条 admin 推送连接，登记到**当前 app** 的广播实例上。"""
     await ws.accept()
-    _admin_broadcast.clients.add(ws)
+    broadcast = _broadcast_of(ws.app)
+    broadcast.clients.add(ws)
     try:
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:
         pass
     finally:
-        _admin_broadcast.clients.discard(ws)
+        broadcast.clients.discard(ws)
 
 
 # ═══════════════════════════════════════════
@@ -272,12 +242,12 @@ async def admin_websocket(ws: WebSocket):
 # ═══════════════════════════════════════════
 
 
-@app.get("/")
+@router.get("/")
 def root():
     return {"ok": True, "games": list(manager._registry.keys())}
 
 
-@app.get("/games/tools")
+@router.get("/games/tools")
 def list_tools():
     return manager.describe_all_tools()
 
@@ -287,7 +257,7 @@ def list_tools():
 # ═══════════════════════════════════════════
 
 
-@app.post("/games/{game_type}")
+@router.post("/games/{game_type}")
 async def create_game(game_type: str, request: Request):
     try:
         params = await request.json()
@@ -327,11 +297,8 @@ def _state_player_error(
     缺 token 一律拒绝——否则按索引就能拿到对手的私有骰子。
     单人引擎没有 players 属性，保持开放（兼容原有调用方式）。
 
-    引擎侧的校验逻辑正由其他改动重写，这里只用 getattr/hasattr 探测，
-    不依赖其内部实现细节。
-
-    `out_of_range_status` 由调用方决定：GET 是查询语义用 404，
-    action 走引擎的入参校验语义用 400，保持各自的既有契约。
+    `out_of_range_status` 由调用方决定：GET 是查询语义用 404，action
+    走引擎的入参校验语义用 400，保持各自的既有契约。
     """
     players = getattr(e, "players", None)
     if players is None:
@@ -348,7 +315,7 @@ def _state_player_error(
     return None
 
 
-@app.post("/games/{session_id}/action")
+@router.post("/games/{session_id}/action")
 async def game_action(session_id: str, request: Request):
     e = manager.get(session_id)
     if not e:
@@ -359,22 +326,23 @@ async def game_action(session_id: str, request: Request):
         if not action:
             raise HTTPException(status_code=400, detail="缺少 action 字段")
         if action == "state":
-            # 顺序很重要：先解析入参、再校验玩家、最后才进引擎。
-            # 任何一步挪到「等对局变化」之后，非法输入都会先傻等满整个
+            # 顺序至关重要：先解析入参、再校验玩家身份、最后才进入等待。
+            # 任何一步挪到「等对局变化」之后，非法输入都会先白等满整个
             # 等待预算（实测 55 秒）才报错。
-            #
-            # timeout 现在只做校验：本分支的引擎还没有 wait_for_change，
-            # 没有可供消费的等待点。按契约先解析（坏值就地 400），
-            # 显式给了才透传——两个引擎的 handle_action 都吃 **params，
-            # 多一个键不影响现有语义。合并阻塞实现后，这里改为直接
-            # 消费 _parse_timeout() 的返回值（届时换成 config.parse_block_budget）。
-            if "timeout" in body:
-                body["timeout"] = _parse_timeout(body["timeout"])
-            err = _state_player_error(
-                e, body.get("player_index", 0), body.get("player_token", ""), 400
-            )
+            pi = body.pop("player_index", 0)
+            token = body.pop("player_token", "")
+            # timeout 只做传输层预算，不传给 handle_action
+            timeout = parse_block_budget(body.pop("timeout", None))
+            err = _state_player_error(e, pi, token, 400)
             if err:
                 raise err
+            # 校验通过后才挂起：非当前回合的调用在这里等待，Agent 只发起一次
+            waiter = getattr(e, "wait_for_change", None)
+            if waiter is not None and timeout > 0:
+                await waiter(pi, timeout)
+            # 等待期间可能有对局因超时结束，立即结算，不必等后台轮询
+            manager.check_timeouts()
+            return e.get_player_state(pi)
         return e.handle_action(action, **body)
     except ValueError as ex:
         raise HTTPException(status_code=400, detail=str(ex))
@@ -386,7 +354,7 @@ async def game_action(session_id: str, request: Request):
         raise HTTPException(status_code=400, detail=f"缺少必填参数: {ex}")
 
 
-@app.get("/games/{session_id}")
+@router.get("/games/{session_id}")
 def game_public_state(session_id: str):
     """Agent 可见的公开状态——秘密信息在这里被剥掉。
 
@@ -406,13 +374,14 @@ def game_public_state(session_id: str):
     return {k: v for k, v in state.items() if k not in SECRET_STATE_KEYS}
 
 
-@app.get("/games/{session_id}/state/{player_index}")
+@router.get("/games/{session_id}/state/{player_index}")
 def game_player_state(session_id: str, player_index: int = 0, player_token: str = ""):
-    """玩家视角状态，含私有骰子——必须证明自己是这名玩家。
+    """玩家视角状态，含私有骰子——必须证明自己是这名玩家，且立即返回。
 
     多人引擎：player_token 必填且要匹配，否则 403（缺 token 也是 403）。
     单人引擎：没有 players 属性，保持开放。
     越界索引：404（避免负索引绕回最后一名玩家）。
+    这是调试与管理界面的查询入口，不进入任何等待。
     """
     e = manager.get(session_id)
     if not e:
@@ -434,13 +403,13 @@ def _check_admin_token(request: Request):
         raise HTTPException(status_code=403, detail="forbidden")
 
 
-@app.get("/admin/games")
+@router.get("/admin/games")
 def admin_list_all(request: Request):
     _check_admin_token(request)
     return manager.list_sessions()
 
 
-@app.get("/admin/games/{session_id}")
+@router.get("/admin/games/{session_id}")
 def admin_detail(session_id: str, request: Request):
     """Admin 详情——秘密信息（target / all_dice）只有这里能看到。
 
@@ -464,14 +433,13 @@ def admin_detail(session_id: str, request: Request):
     return state
 
 
-@app.get("/admin", response_class=HTMLResponse)
+@router.get("/admin", response_class=HTMLResponse)
 def admin_dashboard(request: Request, token: str = ""):
     """Dashboard 页面本身不含秘密，但也不能把 token 交给匿名访问者。
 
     设计：页面需要 token 才能让前端的 adminFetch 带上 X-Admin-Token 去查数据。
-    模板 admin.html 不在本次改动范围内，它只认 window.ADMIN_TOKEN，所以这里
-    保持「往页头注入 ADMIN_TOKEN」这一机制，但把注入条件收紧成「请求方已经
-    证明自己持有 token」：
+    模板 admin.html 只认 window.ADMIN_TOKEN，所以这里保持「往页头注入
+    ADMIN_TOKEN」这一机制，但把注入条件收紧成「请求方已经证明自己持有 token」：
 
     - 查询参数 ?token=... 匹配，或 X-Admin-Token 头匹配 → 注入，
       页面打开即可正常拉数据（运维从 cli.py 打印的那一行复制 ?token=...）
@@ -505,8 +473,10 @@ def _has_own_prompts(engine_cls: type) -> bool:
     return False
 
 
-@app.post("/admin/reload-prompts")
+@router.post("/admin/reload-prompts")
+@router.post("/admin/reload-prompts")
 def reload_prompts(request: Request):
+    """热重载所有**自己**带提示词模板的引擎。没有模板的引擎不报成功。"""
     _check_admin_token(request)
     reloaded = []
     for engine_cls in manager._registry.values():
@@ -515,3 +485,57 @@ def reload_prompts(request: Request):
         engine_cls.get_prompts().reload()
         reloaded.append(getattr(engine_cls, "game_type", str(engine_cls)))
     return {"ok": True, "reloaded": reloaded}
+
+
+# ═══════════════════════════════════════════
+# App 工厂
+# ═══════════════════════════════════════════
+
+
+def create_app() -> FastAPI:
+    """构建 FastAPI app。
+
+    必须每次新建 app：StreamableHTTPSessionManager.run() 只能在实例上调一次，
+    复用 app 会导致第二次进入 lifespan 时抛 RuntimeError。uvicorn 与测试各自
+    调用本函数获得独立的 app 与 session manager。
+    """
+    mcp_session_manager = StreamableHTTPSessionManager(
+        app=build_mcp_server(manager),
+        stateless=False,
+        session_idle_timeout=600,
+    )
+
+    # 广播状态在工厂里创建并挂到 app 上：WS 端点用 ws.app 取自己那一份，
+    # 两条同时运行的 app 因此互不干扰。lifespan 只负责启动/停止它的 poller。
+    broadcast = AdminBroadcast(manager)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        task = asyncio.create_task(
+            _poll_and_broadcast(broadcast), name="admin-state-poller"
+        )
+        broadcast.track(task)
+        async with mcp_session_manager.run():
+            try:
+                yield
+            finally:
+                await broadcast.cancel_all()
+
+    app = FastAPI(title="agent-game", version=__version__, lifespan=lifespan)
+    app.state.admin_broadcast = broadcast
+    app.include_router(router)
+
+    # MCP over Streamable HTTP。
+    # 必须用 Route + session_manager.asgi_app：Mount 会 307 重定向到 /mcp/，
+    # 裸 HTTP 客户端失败；自定义 async 包装则因返回 None 触发 TypeError。
+    app.router.routes.append(
+        Route(
+            "/mcp",
+            endpoint=mcp_session_manager.asgi_app,
+            methods=["GET", "POST", "DELETE"],
+        )
+    )
+    return app
+
+
+app = create_app()
