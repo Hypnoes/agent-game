@@ -14,11 +14,8 @@ from typing import Any
 from mcp import types
 from mcp.server.lowlevel import Server
 
+from agent_game_server.config import BLOCK_BUDGET, __version__
 from agent_game_server.manager import GameManager
-
-# state 动作的等待预算上限（秒）。001 在服务端把传入值截断到这个数，
-# 使游戏服务端总是先于 MCP 消费端的工具调用超时产生响应。
-MAX_BLOCK_BUDGET = 55.0
 
 # mcp-session-id → {game_type: session_id}
 # 仅作连接级缓存；它描述连接，不描述玩家。
@@ -108,11 +105,11 @@ async def _run_action(engine: Any, action: str, args: dict) -> Any:
     """
     if action == "state":
         # timeout 只是传输层的等待预算，不传给 handle_action
-        timeout = float(args.pop("timeout", None) or MAX_BLOCK_BUDGET)
+        timeout = float(args.pop("timeout", None) or BLOCK_BUDGET)
         waiter = getattr(engine, "wait_for_change", None)
         if waiter is not None:
             # 截断到上限，确保服务端先于消费端超时产生响应
-            budget = min(timeout, MAX_BLOCK_BUDGET)
+            budget = min(timeout, BLOCK_BUDGET)
             if budget > 0:
                 await waiter(int(args.get("player_index") or 0), budget)
     return engine.handle_action(action, **args)
@@ -196,7 +193,7 @@ def build_mcp_server(manager: GameManager) -> Server:
 
     return Server(
         "agent-game",
-        version="0.2.2",
+        version=__version__,
         on_list_tools=handle_list_tools,
         on_call_tool=handle_call_tool,
     )

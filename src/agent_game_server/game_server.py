@@ -28,16 +28,11 @@ from fastapi.responses import HTMLResponse
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.routing import Route
 
+from agent_game_server.config import BLOCK_BUDGET, __version__
 from agent_game_server.games.guess_number import GuessNumberEngine
 from agent_game_server.games.liars_dice import LiarsDiceEngine
 from agent_game_server.manager import GameManager
 from agent_game_server.mcp_server import build_mcp_server
-
-__version__ = "0.2.2"
-
-# 单次 state 调用的最长挂起时间（秒）。低于 MCP 消费端默认的 60 秒工具调用
-# 超时，保证超时总是由本服务先发生，Agent 收到的是状态文本而非传输层错误。
-BLOCK_BUDGET = 55.0
 
 manager = GameManager()
 manager.register("guess_number", GuessNumberEngine)

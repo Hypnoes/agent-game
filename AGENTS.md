@@ -22,7 +22,7 @@ app.router.routes.append(
 
 ## 2. 阻塞等待预算上限是 55 秒，消费端超时必须大于它
 
-`liars_dice_state` 在非当前回合时会挂起，服务端预算是 55 秒（`MAX_BLOCK_BUDGET`）。请求里传更大的值会被截断。
+`liars_dice_state` 在非当前回合时会挂起，服务端预算是 55 秒（`config.BLOCK_BUDGET`，MCP 层与 REST 层共用这一个常量）。请求里传更大的值会被截断。
 
 任何 MCP 消费端的工具调用超时必须超过 55 秒。DSH 的 `@deepseek-ai/dsh-mcp-client` 默认 `toolCallTimeoutMs: 60000` 勉强够用，配置里写的是 `70000`。调低到 60 秒以下会在服务端返回之前先触发传输层超时，Agent 看到的是超时错误而不是对局状态。
 

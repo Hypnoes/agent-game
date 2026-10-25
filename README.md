@@ -42,6 +42,7 @@ agent-game/
 ├── src/
 │   └── agent_game_server/             # 服务端（含 MCP 端点）
 │       ├── __init__.py                # 包 re-export
+│       ├── config.py                  # 共享常量（版本号、等待预算）
 │       ├── manager.py                 # GameManager（session 路由）
 │       ├── mcp_server.py              # MCP 协议适配层（工具定义 + 动作路由）
 │       ├── game_server.py             # MCP 端点 + Game API + Admin + WebSocket (port 8800)
