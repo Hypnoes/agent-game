@@ -14,6 +14,9 @@ from agent_game_server.prompt import Prompt
 
 _PROMPT_MODULE = "agent_game_server.assets.guess_number_prompts"
 
+# 对局结束状态（won / lost）。manager._is_finished 依赖这两个值。
+_FINISHED_STATES = ("won", "lost")
+
 
 class _GuessNumberFSM(StateMachine):
     def allowed_transitions(self) -> dict[str, set[str]]:
@@ -44,11 +47,31 @@ class GuessNumberEngine(GameEngine):
         return cls._prompts
 
     def __init__(self, min_num: int = 1, max_num: int = 100, max_attempts: int = 10):
+        if isinstance(min_num, bool) or not isinstance(min_num, int):
+            raise ValueError(f"min_num 必须是整数，收到 {min_num!r}")
+        if isinstance(max_num, bool) or not isinstance(max_num, int):
+            raise ValueError(f"max_num 必须是整数，收到 {max_num!r}")
+        if min_num >= max_num:
+            raise ValueError(
+                f"min_num 必须小于 max_num，收到 min_num={min_num}, max_num={max_num}"
+            )
+        if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
+            raise ValueError(f"max_attempts 必须是整数，收到 {max_attempts!r}")
+        if max_attempts < 1:
+            raise ValueError(f"max_attempts 必须 >= 1，收到 {max_attempts}")
+
         self.min = min_num
         self.max = max_num
         self.max_attempts = max_attempts
+        self._reset()
+
+    # ── 开局 / 重置 ──
+
+    def _reset(self):
+        """重置成一局全新的游戏。config（min/max/max_attempts）不变。"""
+        previous_target = getattr(self, "target", None)
         self._fsm = _GuessNumberFSM("in_progress")
-        self.target = random.randint(min_num, max_num)
+        self.target = self._roll_target(previous_target)
         self.guesses: list[dict] = []
         self.guess_count = 0
         self.last_result: str | None = None
@@ -56,8 +79,22 @@ class GuessNumberEngine(GameEngine):
         self.ended_at: str | None = None
         self.last_action = time.time()
 
+    def _roll_target(self, previous: int | None) -> int:
+        """摇一个新答案。范围里还有别的数时，保证换一个（不重复上一局的答案）。"""
+        if previous is None or self.max <= self.min:
+            return random.randint(self.min, self.max)
+        while True:
+            candidate = random.randint(self.min, self.max)
+            if candidate != previous:
+                return candidate
+
     @property
     def state(self) -> str:
+        return self._fsm.state
+
+    @property
+    def phase(self) -> str:
+        """兼容旧 API / GameEngine 协议 — 和 state 等价。"""
         return self._fsm.state
 
     @property
@@ -133,6 +170,8 @@ class GuessNumberEngine(GameEngine):
     def handle_action(self, action: str, **params):
         """统一 action 入口"""
         if action == "start":
+            # 无论当前是什么状态，start 都开一局新的
+            self._reset()
             return self.get_player_state()
         elif action == "guess":
             self._guess(params["number"])
@@ -151,9 +190,11 @@ class GuessNumberEngine(GameEngine):
 
     # ── 游戏逻辑 ──
 
-    def _guess(self, number: int):
+    def _guess(self, number):
         if not self._fsm.is_in("in_progress"):
             raise ValueError(f"游戏已结束 ({self._fsm.state})")
+
+        number = self._validate_number(number)
 
         if number < self.target:
             result = "too_low"
@@ -179,6 +220,26 @@ class GuessNumberEngine(GameEngine):
         elif self.guess_count >= self.max_attempts:
             self._fsm.transition_to("lost")
             self.ended_at = datetime.now(UTC).isoformat()
+
+    def _validate_number(self, number) -> int:
+        """把外部传进来的猜测值收敛成合法整数：必须在 [min, max] 内。
+
+        非法输入一律 ValueError（HTTP 层对应 400，而不是 500）。
+        bool 是 int 的子类，但 True/False 不算有意义的猜测，同样拒掉。
+        """
+        if isinstance(number, bool):
+            raise ValueError(f"猜测值必须是整数，收到 {number!r}")
+        if isinstance(number, float):
+            if not number.is_integer():
+                raise ValueError(f"猜测值必须是整数，收到 {number!r}")
+            number = int(number)
+        elif not isinstance(number, int):
+            raise ValueError(
+                f"猜测值必须是 {self.min}-{self.max} 的整数，收到 {type(number).__name__}: {number!r}"
+            )
+        if not self.min <= number <= self.max:
+            raise ValueError(f"猜测值必须在 {self.min}-{self.max} 之间，收到 {number}")
+        return number
 
     # ── Prompt 生成（模板渲染，修改 YAML 后调 reload() 热更新）──
 
