@@ -20,6 +20,11 @@ from agent_game_server.config import (
     __version__,
     parse_block_budget,
 )
+from agent_game_server.games.game_engine import (
+    is_finished,
+    phase_of,
+    player_identity_error,
+)
 from agent_game_server.manager import GameManager
 
 logger = logging.getLogger(__name__)
@@ -31,9 +36,6 @@ _MCP_SESSIONS: dict[str, dict[str, str]] = {}
 
 # 非 HTTP 传输（ctx.request 为 None）下的回落键，避免每次调用都新建缓存。
 _FALLBACK_SESSION_KEY = "__no_http_session__"
-
-# 判定对局已结束的状态名。不同引擎的终态名不同，统一在这里识别。
-_FINISHED_PHASES = frozenset({"finished", "won", "lost"})
 
 # 只有这些动作可以凭空调出一个新会话。其它动作没有可解析的会话时直接报错，
 # 否则像 liars_dice_bid 这种漏传会话的调用会先建出一个空大厅再失败。
@@ -49,7 +51,13 @@ class SessionNotFound(LookupError):
 
 
 # 可预期的调用方错误：message 直接回给调用方，不写堆栈。
-_EXPECTED_ERRORS = (ValueError, SessionNotFound)
+#
+# KeyError 与 TypeError 必须算进来：引擎用 `params["quantity"]` 取必填参数，
+# 缺了就抛 KeyError；参数类型不对时抛 TypeError。这两类与 ValueError 一样是
+# "调用方传错了"，不是服务端 bug。REST 分支一直按这个口径映射成 400，MCP 分支
+# 曾经把它们归进"非预期异常"，于是同一个漏传参数在两条通道上一会儿是 400、
+# 一会儿是"服务端内部错误: KeyError"。
+_EXPECTED_ERRORS = (ValueError, KeyError, TypeError, SessionNotFound)
 
 
 # ═══════════════════════════════════════════
@@ -157,24 +165,12 @@ def _remember_session(key: str) -> dict[str, str]:
 
 
 def _engine_phase(engine: Any) -> str | None:
-    """引擎当前状态名。liars_dice 用 phase，guess_number 用 status。
-
-    不能写成 getattr(engine, "phase", getattr(engine, "status", None))：
-    GameEngine 协议声明了 phase 属性（函数体是 ...，取值恒为 None），
-    GuessNumberEngine 从协议继承了它，于是 phase 这个属性"存在但为 None"；
-    而 getattr 的默认值只在属性缺失时生效，属性为 None 时不会回退到 status。
-    结果已结束的猜数字对局（status == "won"）被当成进行中。
-    因此逐个取，拿到字符串才算数。
-    """
-    for attr in ("phase", "status"):
-        value = getattr(engine, attr, None)
-        if isinstance(value, str):
-            return value
-    return None
+    """引擎当前状态名（phase 优先，回落到 status）。判定逻辑在 game_engine 里。"""
+    return phase_of(engine)
 
 
 def _engine_finished(engine: Any) -> bool:
-    return _engine_phase(engine) in _FINISHED_PHASES
+    return is_finished(engine)
 
 
 def _is_multiplayer(engine: Any) -> bool:
@@ -222,16 +218,25 @@ async def _run_action(engine: Any, action: str, args: dict) -> Any:
 
     state 动作在引擎提供 wait_for_change 时先阻塞等待：非当前回合的调用会挂起，
     直到对手行动、对局结束或预算耗尽。等待结束后仍交给 handle_action，
-    保持玩家身份校验等原有语义。引擎没有该方法时立即返回。
+    保持引擎自己的校验与渲染语义。引擎没有该方法时立即返回。
+
+    **校验必须在等待之前。** 否则一个 token 打错或索引越界的 state 调用会在服务端
+    白挂满整个预算（55 秒）才拿到"player_token 不匹配"，调用方还以为对手在思考。
+    REST 分支一直是这个顺序（game_server.game_action），MCP 分支曾经相反，
+    两条传输对同一类非法输入的错误时延相差 55 秒。
 
     timeout 只是传输层的等待预算，对任何动作都不传给 handle_action。预算为 0
     表示"本次不等待"：直接跳过 wait_for_change（连协程都不创建），而不是拿 0
-    去等一次——后者要白白经历一次 asyncio 调度。只有 outcome 是"等"的动作才会
-    走到这里，所以该解析失败即报错，不会静默降级成默认预算。
+    去等一次——后者要白白经历一次 asyncio 调度。
     """
     timeout = args.pop("timeout", None)
     if action == "state":
         budget = parse_block_budget(timeout)
+        identity = player_identity_error(
+            engine, args.get("player_index", 0), args.get("player_token", "")
+        )
+        if identity is not None:
+            raise ValueError(identity.message)
         waiter = getattr(engine, "wait_for_change", None)
         if waiter is not None and budget > 0:
             await waiter(int(args.get("player_index") or 0), budget)

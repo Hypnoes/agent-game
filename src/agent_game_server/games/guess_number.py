@@ -14,9 +14,6 @@ from agent_game_server.prompt import Prompt
 
 _PROMPT_MODULE = "agent_game_server.assets.guess_number_prompts"
 
-# 对局结束状态（won / lost）。manager._is_finished 依赖这两个值。
-_FINISHED_STATES = ("won", "lost")
-
 
 class _GuessNumberFSM(StateMachine):
     def allowed_transitions(self) -> dict[str, set[str]]:
@@ -37,6 +34,11 @@ class GuessNumberEngine(GameEngine):
     game_type = "guess_number"
     game_name = "猜数字"
     player_mode = "single"
+
+    # 本引擎的终态名与秘密键。管理器与公开状态出口都读这两个声明，
+    # 不再内置一份"猜数字用 won/lost"的列表。
+    finished_states = frozenset({"won", "lost"})
+    secret_keys = frozenset({"target"})
 
     _prompts: Prompt | None = None
 

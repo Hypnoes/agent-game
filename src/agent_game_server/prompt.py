@@ -165,16 +165,26 @@ class Prompt:
         return self._render_template(self._templates[name], ctx)
 
     def _render_template(self, template: str, ctx: dict[str, Any]) -> str:
+        """整段渲染，失败就逐字段降级；任何异常都不外抛。
+
+        三层降级是**兜底链**，不是三条并列的路径：路径 1 失败才走 2，2 失败才走 3。
+        所以"路径 3 永远不可达"是正常的——它的作用是防止路径 2 本身出问题时
+        把异常交给调用方。
+
+        这里两条 except 都不列异常清单：上下文里的值来自引擎，可能是任何对象，
+        它的 __format__ / __getattr__ / __getitem__ 抛什么由它自己决定。
+        实测一个自定义 `__format__` 抛 RuntimeError 就穿透了清单式捕获。
+        """
         # 路径 1：整段严格渲染。字段齐、格式对时这就是唯一路径。
         try:
             return template.format(**ctx)
-        except (KeyError, IndexError, ValueError, TypeError):
+        except Exception:  # noqa: BLE001
             pass
 
-        # 路径 2/3：逐字段降级渲染
+        # 路径 2：逐字段降级渲染
         try:
             return self._render_lenient(template, ctx)
-        except Exception:  # noqa: BLE001 — 提示词层绝不能让一局游戏 500
+        except Exception:  # noqa: BLE001 — 路径 3：提示词层绝不能让一局游戏 500
             return BROKEN_PREFIX + template
 
     def _render_lenient(self, template: str, ctx: dict[str, Any]) -> str:
@@ -208,6 +218,11 @@ class Prompt:
         single = "{" + _raw_placeholder(field, spec, conversion) + "}"
         try:
             return single.format(**ctx)
-        except (ValueError, TypeError, KeyError, IndexError):
-            # 字段有值但渲染失败 —— 保留原始占位符便于定位
+        except Exception:  # noqa: BLE001
+            # 字段有值但渲染失败 —— 保留原始占位符便于定位。
+            #
+            # 这里刻意捕获全部异常而不再列清单：值来自引擎，可能是任何对象，
+            # 它的 __format__ / __getattr__ / __getitem__ 抛什么由它自己决定
+            # （实测一个自定义 __format__ 抛 RuntimeError 就能穿透所有清单式捕获）。
+            # 提示词层是展示层，任何渲染失败都只该降级，不该把一局游戏 500 掉。
             return f"{{{UNRENDERED_PREFIX}:{_raw_placeholder(field, spec, conversion)}}}"

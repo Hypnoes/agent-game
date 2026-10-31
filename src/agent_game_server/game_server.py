@@ -30,8 +30,13 @@ from fastapi.responses import HTMLResponse
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.routing import Route
 
-from agent_game_server.config import BLOCK_BUDGET, __version__, parse_block_budget
-from agent_game_server.games.game_engine import GameEngine
+from agent_game_server.config import __version__, parse_block_budget
+from agent_game_server.games.game_engine import (
+    DEFAULT_SECRET_KEYS,
+    GameEngine,
+    player_identity_error,
+    secret_keys_of,
+)
 from agent_game_server.games.guess_number import GuessNumberEngine
 from agent_game_server.games.liars_dice import LiarsDiceEngine
 from agent_game_server.manager import GameManager
@@ -46,11 +51,12 @@ manager.register("liars_dice", LiarsDiceEngine)
 # 模板目录
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 
-# 对局状态里属于「秘密信息」的顶层键：猜数字的 target、大话骰的全场骰子。
+# 默认要剥掉的秘密键。真正的名单由引擎自己声明（GameEngine.secret_keys），
+# 这里是"引擎没声明时"的兜底，也是既有两个引擎的既有行为。
 # Agent 能拿到的公开状态必须剥掉它们，否则游戏本身失去意义。
 # 只有 /admin 系列接口（_check_admin_token 鉴权通过后）才允许看到，
 # 那里是秘密信息唯一的展示出口。见 game_public_state()。
-SECRET_STATE_KEYS = frozenset({"target", "all_dice"})
+SECRET_STATE_KEYS = DEFAULT_SECRET_KEYS
 
 # Admin 内部查询密钥。导入时解析一次，之后全程用这个值：
 # - 有 AGENT_GAME_ADMIN_TOKEN 就用它（部署时显式配置）
@@ -222,9 +228,31 @@ def _broadcast_of(app: FastAPI) -> AdminBroadcast:
     return _admin_broadcast
 
 
+def _manager_of(app: FastAPI) -> GameManager:
+    """取某个 app 实例自己的 GameManager。
+
+    `create_app(manager)` 把实例挂在 `app.state.manager` 上。没有工厂时回落到
+    模块级 `manager`——单实例部署下两者是同一个对象。路由一律经由这里取，
+    这样两个带独立 manager 的 app 才能同时在线而互不串状态。
+    """
+    instance = getattr(app.state, "manager", None)
+    if isinstance(instance, GameManager):
+        return instance
+    return manager
+
+
 @router.websocket("/admin/ws")
-async def admin_websocket(ws: WebSocket):
-    """接受一条 admin 推送连接，登记到**当前 app** 的广播实例上。"""
+async def admin_websocket(ws: WebSocket, token: str = ""):
+    """接受一条 admin 推送连接，登记到**当前 app** 的广播实例上。
+
+    连接前必须出示 admin token：浏览器 WebSocket 无法设置自定义头，所以走
+    `?token=` 查询参数。不匹配直接以 1008（policy violation）关闭——这个端点
+    只推「状态变了」不泄密，但它是唯一无需凭证即可占用的长连接入口。
+    """
+    if not token or not _token_matches(token):
+        await ws.close(code=1008)
+        return
+
     await ws.accept()
     broadcast = _broadcast_of(ws.app)
     broadcast.clients.add(ws)
@@ -243,13 +271,13 @@ async def admin_websocket(ws: WebSocket):
 
 
 @router.get("/")
-def root():
-    return {"ok": True, "games": list(manager._registry.keys())}
+def root(request: Request):
+    return {"ok": True, "games": list(_manager_of(request.app)._registry.keys())}
 
 
 @router.get("/games/tools")
-def list_tools():
-    return manager.describe_all_tools()
+def list_tools(request: Request):
+    return _manager_of(request.app).describe_all_tools()
 
 
 # ═══════════════════════════════════════════
@@ -257,19 +285,41 @@ def list_tools():
 # ═══════════════════════════════════════════
 
 
+async def _json_object(request: Request) -> dict:
+    """把请求体解析成 dict。空 body 当空参数，非空但非对象一律 400。
+
+    `await request.json()` 有三种失败形态，必须分开处理：
+    - body 完全为空：调用方没带参数，按 `{}` 处理（既有行为）
+    - body 不是合法 JSON：拼错了，报 400 —— 曾经被静默当成 `{}`，
+      于是一个本该失败的请求建出了一局全默认参数的真实对局并占住匹配池
+    - body 是合法 JSON 但不是对象（`"hi"`、`5`、`true`）：报 400。
+      曾经直接 `body.pop(...)` 触发 AttributeError，变成 500
+    """
+    raw = await request.body()
+    if not raw.strip():
+        return {}
+    try:
+        parsed = await request.json()
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail=f"请求体不是合法 JSON: {ex}") from ex
+    if not isinstance(parsed, dict):
+        raise HTTPException(
+            status_code=400,
+            detail=f"请求体必须是 JSON 对象，收到 {type(parsed).__name__}",
+        )
+    return parsed
+
+
 @router.post("/games/{game_type}")
 async def create_game(game_type: str, request: Request):
+    params = await _json_object(request)
     try:
-        params = await request.json()
-    except ValueError:
-        params = {}
-    try:
-        sid, e = manager.create(game_type, **params)
+        sid, e = _manager_of(request.app).create(game_type, **params)
     except ValueError as ex:
-        raise HTTPException(status_code=400, detail=str(ex))
+        raise HTTPException(status_code=400, detail=str(ex)) from ex
     except TypeError as ex:
         # 参数名不对（如 {"bogus": 1}）：是调用方的输入问题，不是服务端 bug
-        raise HTTPException(status_code=400, detail=f"无效的创建参数: {ex}")
+        raise HTTPException(status_code=400, detail=f"无效的创建参数: {ex}") from ex
     return {
         "session_id": sid,
         "game_type": game_type,
@@ -277,51 +327,35 @@ async def create_game(game_type: str, request: Request):
     }
 
 
-def _player_token(player) -> str | None:
-    """取玩家的 token。引擎可能用对象（.token）也可能用 dict（["token"]）。
-
-    两种形状都认，是为了让这条校验只拒绝「真的没有 token」的请求，
-    而不是因为引擎内部换了数据结构就误伤合法玩家。
-    """
-    if isinstance(player, dict):
-        return player.get("token")
-    return getattr(player, "token", None)
-
-
 def _state_player_error(
-    e, player_index: int, player_token: str, out_of_range_status: int
+    e, player_index: object, player_token: object, out_of_range_status: int
 ) -> HTTPException | None:
-    """玩家身份/索引校验，返回要抛的错误（None 表示通过）。
+    """把共享的身份校验结果翻译成 HTTP 错误（None 表示通过）。
 
-    多人引擎（暴露 players 列表）必须带 player_token 且与对应玩家一致；
-    缺 token 一律拒绝——否则按索引就能拿到对手的私有骰子。
-    单人引擎没有 players 属性，保持开放（兼容原有调用方式）。
-
+    校验本身在 `game_engine.player_identity_error()`：MCP 分支用同一个函数，
+    两条传输因此不会对"谁是这名玩家"给出不同答案。
     `out_of_range_status` 由调用方决定：GET 是查询语义用 404，action
     走引擎的入参校验语义用 400，保持各自的既有契约。
     """
-    players = getattr(e, "players", None)
-    if players is None:
+    identity = player_identity_error(e, player_index, player_token)
+    if identity is None:
         return None
-    if not isinstance(player_index, int) or isinstance(player_index, bool):
-        return HTTPException(status_code=out_of_range_status, detail="无效的玩家编号")
-    if not 0 <= player_index < len(players):
-        detail = "player not found" if out_of_range_status == 404 else "无效的玩家编号"
+    if identity.kind == "not_found":
+        detail = "player not found" if out_of_range_status == 404 else identity.message
         return HTTPException(status_code=out_of_range_status, detail=detail)
-    if not player_token:
-        return HTTPException(status_code=403, detail="缺少 player_token")
-    if _player_token(players[player_index]) != player_token:
-        return HTTPException(status_code=403, detail="player_token 不匹配")
-    return None
+    if identity.kind == "invalid_index":
+        return HTTPException(status_code=out_of_range_status, detail=identity.message)
+    return HTTPException(status_code=403, detail=identity.message)
 
 
 @router.post("/games/{session_id}/action")
 async def game_action(session_id: str, request: Request):
-    e = manager.get(session_id)
+    mgr = _manager_of(request.app)
+    e = mgr.get(session_id)
     if not e:
         raise HTTPException(status_code=404, detail="session not found")
     try:
-        body = await request.json()
+        body = await _json_object(request)
         action = body.pop("action", None)
         if not action:
             raise HTTPException(status_code=400, detail="缺少 action 字段")
@@ -341,28 +375,30 @@ async def game_action(session_id: str, request: Request):
             if waiter is not None and timeout > 0:
                 await waiter(pi, timeout)
             # 等待期间可能有对局因超时结束，立即结算，不必等后台轮询
-            manager.check_timeouts()
+            mgr.check_timeouts()
             return e.get_player_state(pi)
         return e.handle_action(action, **body)
+    except HTTPException:
+        raise
     except ValueError as ex:
-        raise HTTPException(status_code=400, detail=str(ex))
+        raise HTTPException(status_code=400, detail=str(ex)) from ex
     except TypeError as ex:
         # 参数类型错误（None 参与比较、关键字对不上引擎签名）
-        raise HTTPException(status_code=400, detail=f"无效的参数: {ex}")
+        raise HTTPException(status_code=400, detail=f"无效的参数: {ex}") from ex
     except KeyError as ex:
         # 必填参数整个缺失（如 guess 少 number、join 少 player_name）
-        raise HTTPException(status_code=400, detail=f"缺少必填参数: {ex}")
+        raise HTTPException(status_code=400, detail=f"缺少必填参数: {ex}") from ex
 
 
 @router.get("/games/{session_id}")
-def game_public_state(session_id: str):
+def game_public_state(session_id: str, request: Request):
     """Agent 可见的公开状态——秘密信息在这里被剥掉。
 
     get_public_state() 是给 admin 用的「全量」视图，含 target / all_dice。
     直接回给 Agent 等于把答案和全场骰子送出去，所以这个端点只输出
     去掉 SECRET_STATE_KEYS 之后的副本。需要秘密信息请走 /admin/games/{id}。
     """
-    e = manager.get(session_id)
+    e = _manager_of(request.app).get(session_id)
     if not e:
         raise HTTPException(status_code=404, detail="session not found")
     if not hasattr(e, "get_public_state"):
@@ -370,12 +406,16 @@ def game_public_state(session_id: str):
     state = e.get_public_state()
     if not isinstance(state, dict):
         return state
-    # 在副本上剥键，别改动引擎自己维护的状态对象
-    return {k: v for k, v in state.items() if k not in SECRET_STATE_KEYS}
+    # 在副本上剥键，别改动引擎自己维护的状态对象。
+    # 剥哪些键由引擎自己声明（secret_keys），不是框架内置一张表。
+    secrets = secret_keys_of(e)
+    return {k: v for k, v in state.items() if k not in secrets}
 
 
 @router.get("/games/{session_id}/state/{player_index}")
-def game_player_state(session_id: str, player_index: int = 0, player_token: str = ""):
+def game_player_state(
+    session_id: str, request: Request, player_index: int = 0, player_token: str = ""
+):
     """玩家视角状态，含私有骰子——必须证明自己是这名玩家，且立即返回。
 
     多人引擎：player_token 必填且要匹配，否则 403（缺 token 也是 403）。
@@ -383,7 +423,7 @@ def game_player_state(session_id: str, player_index: int = 0, player_token: str 
     越界索引：404（避免负索引绕回最后一名玩家）。
     这是调试与管理界面的查询入口，不进入任何等待。
     """
-    e = manager.get(session_id)
+    e = _manager_of(request.app).get(session_id)
     if not e:
         raise HTTPException(status_code=404, detail="session not found")
     err = _state_player_error(e, player_index, player_token, 404)
@@ -406,7 +446,7 @@ def _check_admin_token(request: Request):
 @router.get("/admin/games")
 def admin_list_all(request: Request):
     _check_admin_token(request)
-    return manager.list_sessions()
+    return _manager_of(request.app).list_sessions()
 
 
 @router.get("/admin/games/{session_id}")
@@ -419,14 +459,11 @@ def admin_detail(session_id: str, request: Request):
     其余键原样保留（包括 target / all_dice 这类秘密）。
     """
     _check_admin_token(request)
-    e = manager.get(session_id)
+    e = _manager_of(request.app).get(session_id)
     if not e:
         raise HTTPException(status_code=404, detail="not found")
     state = e.get_public_state()
-    if not isinstance(state, dict):
-        state = {"state": state}
-    else:
-        state = dict(state)
+    state = dict(state) if isinstance(state, dict) else {"state": state}
     state["session_id"] = session_id
     state["game_type"] = getattr(e, "game_type", "unknown")
     state["game_name"] = getattr(e, "game_name", e.__class__.__name__)
@@ -474,12 +511,11 @@ def _has_own_prompts(engine_cls: type) -> bool:
 
 
 @router.post("/admin/reload-prompts")
-@router.post("/admin/reload-prompts")
 def reload_prompts(request: Request):
     """热重载所有**自己**带提示词模板的引擎。没有模板的引擎不报成功。"""
     _check_admin_token(request)
     reloaded = []
-    for engine_cls in manager._registry.values():
+    for engine_cls in _manager_of(request.app)._registry.values():
         if not _has_own_prompts(engine_cls):
             continue
         engine_cls.get_prompts().reload()
@@ -492,22 +528,31 @@ def reload_prompts(request: Request):
 # ═══════════════════════════════════════════
 
 
-def create_app() -> FastAPI:
+def create_app(manager: GameManager | None = None) -> FastAPI:
     """构建 FastAPI app。
 
     必须每次新建 app：StreamableHTTPSessionManager.run() 只能在实例上调一次，
     复用 app 会导致第二次进入 lifespan 时抛 RuntimeError。uvicorn 与测试各自
     调用本函数获得独立的 app 与 session manager。
+
+    传入 `manager` 时整个 app（路由、MCP server、广播）都用它，因此两个 app
+    可以各自带一份对局表同时在线。不传则用模块级 manager——单实例部署下两者
+    是同一个对象，`uvicorn` 与旧调用路径不受影响。
+
+    路由一律通过 `request.app.state.manager` 取实例，不再直接读模块全局；
+    否则传入的 manager 只会作用于 MCP 与广播，REST 仍打到全局那一份。
     """
+    mgr = manager if manager is not None else globals()["manager"]
+
     mcp_session_manager = StreamableHTTPSessionManager(
-        app=build_mcp_server(manager),
+        app=build_mcp_server(mgr),
         stateless=False,
         session_idle_timeout=600,
     )
 
     # 广播状态在工厂里创建并挂到 app 上：WS 端点用 ws.app 取自己那一份，
     # 两条同时运行的 app 因此互不干扰。lifespan 只负责启动/停止它的 poller。
-    broadcast = AdminBroadcast(manager)
+    broadcast = AdminBroadcast(mgr)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -522,6 +567,7 @@ def create_app() -> FastAPI:
                 await broadcast.cancel_all()
 
     app = FastAPI(title="agent-game", version=__version__, lifespan=lifespan)
+    app.state.manager = mgr
     app.state.admin_broadcast = broadcast
     app.include_router(router)
 

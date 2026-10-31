@@ -33,7 +33,7 @@ def main():
     except ImportError:
         print("❌ fastapi 未安装。请重新安装：")
         print("  uv tool install --reinstall .")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     _signal.signal(_signal.SIGINT, lambda s, f: _sys.exit(0))
 

@@ -342,6 +342,18 @@
     const ADMIN_API = '/admin/games';
     let activeGid = null;
 
+    // 所有拼进 innerHTML 的外部字符串都要过这里。
+    // 玩家名与叫数留言直接来自 Agent，占位符是 `<img onerror=...>` 时页面会执行脚本，
+    // 而这个页面是唯一能看到 target / all_dice 的地方，注入等于把秘密交给攻击者。
+    function esc(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     function adminFetch(url) {
       const opts = {};
       if (window.ADMIN_TOKEN) opts.headers = { 'X-Admin-Token': window.ADMIN_TOKEN };
@@ -349,8 +361,11 @@
     }
 
     // ── WebSocket ──
+    // 浏览器 WebSocket 不能设自定义头，所以 token 走查询参数；服务端不匹配会以 1008 关闭。
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(protocol + '//' + location.host + '/admin/ws');
+    const ws = new WebSocket(
+      protocol + '//' + location.host + '/admin/ws?token=' + encodeURIComponent(window.ADMIN_TOKEN || '')
+    );
 
     ws.onopen = () => {
       document.getElementById('ws-indicator').innerHTML = '<span class="dot live"></span> WebSocket 实时推送';
@@ -397,21 +412,21 @@
       games.sort((a, b) => (STATUS_ORDER[a.status] || 0) - (STATUS_ORDER[b.status] || 0) || (b.created_at || 0) - (a.created_at || 0));
 
       tbody.innerHTML = games.map(g => {
-        const type = TYPE_LABEL[g.game_type] || g.game_type;
+        const type = TYPE_LABEL[g.game_type] || esc(g.game_type);
         const sid = g.session_id || g.game_id;
         let detail = '';
         if (g.game_type === 'guess_number') {
           const t = g.status === 'in_progress' ? '🔒 ' + g.target : g.target;
-          detail = `🎯${t} (${g.guess_count}/${g.max_attempts})`;
+          detail = `🎯${esc(t)} (${esc(g.guess_count)}/${esc(g.max_attempts)})`;
         } else if (g.game_type === 'liars_dice') {
-          const p = g.players ? g.players.join(' vs ') : '?';
-          const call = g.current_call ? `${g.current_call.quantity}×${g.current_call.face}` : '—';
-          detail = `${p} | 叫: ${call} | 回合: ${g.current_turn}`;
+          const p = g.players ? g.players.map(esc).join(' vs ') : '?';
+          const call = g.current_call ? `${esc(g.current_call.quantity)}×${esc(g.current_call.face)}` : '—';
+          detail = `${p} | 叫: ${call} | 回合: ${esc(g.current_turn)}`;
         }
-        return `<tr onclick="showDetail('${sid}')" style="cursor:pointer">
-      <td><span class="game-type ${g.game_type}">${type}</span></td>
-      <td><code>${sid}</code></td>
-      <td><span class="status ${g.status}">${g.status}</span></td>
+        return `<tr onclick="showDetail('${esc(sid)}')" style="cursor:pointer">
+      <td><span class="game-type ${esc(g.game_type)}">${type}</span></td>
+      <td><code>${esc(sid)}</code></td>
+      <td><span class="status ${esc(g.status)}">${esc(g.status)}</span></td>
       <td>${detail}</td>
       <td class="time-cell">${formatTime(g.created_at)}</td>
     </tr>`;
@@ -420,7 +435,7 @@
 
     function showDetail(gid) {
       activeGid = gid;
-      adminFetch(ADMIN_API + '/' + gid).then(r => r.json()).then(g => {
+      adminFetch(ADMIN_API + '/' + encodeURIComponent(gid)).then(r => r.json()).then(g => {
         const panel = document.getElementById('detail-panel');
         panel.classList.add('active');
         const content = document.getElementById('detail-content');
@@ -428,23 +443,23 @@
 
         if (g.game_type === 'guess_number') {
           document.getElementById('detail-title').innerHTML =
-            `🔢 猜数字 <code>${sid}</code> — 🎯 ${g.target}` +
-            (g.ended_at ? ` — ${formatTime(g.ended_at)}` : '');
+            `🔢 猜数字 <code>${esc(sid)}</code> — 🎯 ${esc(g.target)}` +
+            (g.ended_at ? ` — ${esc(formatTime(g.ended_at))}` : '');
           content.innerHTML = g.guesses && g.guesses.length
             ? g.guesses.map((gg, i) => `<div class="guess-row">
             <span class="num">#${i + 1}</span>
-            <span class="val">猜 ${gg.number}</span>
-            <span class="${gg.result}">${gg.result}</span>
-            <span class="ts">${formatTime(gg.timestamp)}</span></div>`).join('')
+            <span class="val">猜 ${esc(gg.number)}</span>
+            <span class="${esc(gg.result)}">${esc(gg.result)}</span>
+            <span class="ts">${esc(formatTime(gg.timestamp))}</span></div>`).join('')
             : '<div class="empty">尚未猜测</div>';
         } else if (g.game_type === 'liars_dice') {
           const winner = g.winner != null ? g.players[g.winner] : '?';
           document.getElementById('detail-title').innerHTML =
-            `🎲 大话骰 <code>${sid}</code>` +
-            (g.winner != null ? ` — 🏆 ${winner} 胜` : '');
+            `🎲 大话骰 <code>${esc(sid)}</code>` +
+            (g.winner != null ? ` — 🏆 ${esc(winner)} 胜` : '');
           let html = '<div class="dice-display">';
           (g.all_dice || []).forEach((d, i) => {
-            html += `<div class="player-dice"><div class="name">${g.players[i]}</div>
+            html += `<div class="player-dice"><div class="name">${esc(g.players[i])}</div>
           <div class="dice">${d.map(x => '⚀⚁⚂⚃⚄⚅'[x - 1]).join(' ')}</div></div>`;
           });
           html += '</div>';
@@ -452,9 +467,9 @@
             html += '<div style="margin-top:8px">';
             g.call_history.forEach(c => {
               html += `<div class="call-row">
-            <span class="player">${c.player}</span>
-            <span class="bid">${c.quantity}×${c.face}</span>
-            ${c.message ? `<span class="msg">"${c.message}"</span>` : ''}
+            <span class="player">${esc(c.player)}</span>
+            <span class="bid">${esc(c.quantity)}×${esc(c.face)}</span>
+            ${c.message ? `<span class="msg">"${esc(c.message)}"</span>` : ''}
           </div>`;
             });
             html += '</div>';

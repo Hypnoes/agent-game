@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import contextlib
 import time
 
 from agent_game_server.games.liars_dice import LiarsDiceEngine
@@ -108,10 +109,8 @@ def test_cancellation_cleans_waiters():
         pending = e._signal.waiter_count
 
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
         return pending, e._signal.waiter_count
 
     pending, remaining = asyncio.run(scenario())

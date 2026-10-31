@@ -10,9 +10,14 @@ GameManager — 统一的 session 路由和生命周期管理。
 不强制 Engine 基类——靠 duck typing。
 """
 
+import logging
 import time
 import uuid
 from typing import Any
+
+from agent_game_server.games.game_engine import is_finished
+
+logger = logging.getLogger(__name__)
 
 # 已结束的对局在内存里保留多久（秒）。过期后由 check_timeouts() 回收，
 # 避免 admin/games 列表无限增长。
@@ -119,7 +124,10 @@ class GameManager:
         for sid, engine in list(self._engines.items()):
             state = {}
             if hasattr(engine, "get_public_state"):
-                state = engine.get_public_state()
+                declared = engine.get_public_state()
+                # 拷一份再塞管理字段：直接改返回值等于写进引擎自己的状态对象，
+                # 下一个读它的人会看到 session_id / game_type 这些不属于业务的东西。
+                state = dict(declared) if isinstance(declared, dict) else {"state": declared}
             state["session_id"] = sid
             state["game_type"] = game_type_of(engine)
             state["game_name"] = getattr(engine, "game_name", engine.__class__.__name__)
@@ -141,15 +149,8 @@ class GameManager:
 
     @staticmethod
     def _is_finished(engine: Any) -> bool:
-        """对局是否已结束。
-
-        大话骰用 phase（"finished"），猜数字用 status（"won" / "lost"）。
-        两个都看，且都能容忍缺属性 / 属性为 None 的引擎 ——
-        只认其中一个字段会把另一类游戏永远判成"没结束"。
-        """
-        if getattr(engine, "phase", None) == "finished":
-            return True
-        return getattr(engine, "status", None) in ("won", "lost")
+        """对局是否已结束。终态名由引擎自己声明，见 game_engine.is_finished。"""
+        return is_finished(engine)
 
     @classmethod
     def _is_waiting(cls, engine: Any) -> bool:
@@ -164,44 +165,64 @@ class GameManager:
         """检查所有 session 超时，并回收超过保留期的已结束对局。
 
         返回超时事件列表；已结束对局的回收不产生事件。
+
+        单个引擎的异常就地隔离：这是**唯一**结算超时的地方，一个坏引擎（比如
+        get_public_state 里塞了 datetime、或 check_timeout 自己抛）不能让其余对局
+        永远不再超时。REST 的 state 分支会在请求内直接调用本方法，所以隔离失败
+        会把一个坏引擎的影响放大成全服务 500。
         """
         events: list[dict] = []
         now = time.time() if now is None else now
 
         for sid in list(self._engines):
-            engine = self._engines[sid]
-
-            # 已结束：第一次看到时记下结束时刻，超过保留期就回收
-            if self._is_finished(engine):
-                finished_at = self._finished_at.setdefault(sid, now)
-                if now - finished_at > FINISHED_RETENTION:
-                    self.remove(sid)
+            engine = self._engines.get(sid)
+            if engine is None:  # 同一轮里被前面的分支回收了
                 continue
-
-            # 重新开局（比如 guess_number start 重置了同一 session）：
-            # 旧一轮的结束时刻必须清掉，否则下一轮结束会被立刻当成过期回收。
-            self._finished_at.pop(sid, None)
-
-            checker = getattr(engine, "check_timeout", None)
-            if checker is None:
+            try:
+                event = self._check_one(sid, engine, now)
+            except Exception:  # noqa: BLE001 — 坏引擎只影响自己
+                logger.warning(
+                    "check_timeouts 跳过异常 session %s（game_type=%s）",
+                    sid,
+                    game_type_of(engine),
+                    exc_info=True,
+                )
                 continue
-            result = checker(now)
-            if not result:
-                continue
-
-            event_type = str(result.get("type", ""))
-            if result.get("expired"):
-                # 大厅超时：事件只报一次（_seen_expired 去重），随后立刻回收 session
-                if self._mark_expired(sid, event_type):
-                    events.append({"session_id": sid, **result})
-                self.remove(sid)
-            else:
-                events.append({"session_id": sid, **result})
-                if self._is_finished(engine):
-                    # 判负/结束发生在本次检查里，结束时刻从此刻算起
-                    self._finished_at[sid] = now
-
+            if event is not None:
+                events.append(event)
         return events
+
+    def _check_one(self, sid: str, engine: Any, now: float) -> dict | None:
+        """结算单个 session。返回要上报的事件，或 None。"""
+        # 已结束：第一次看到时记下结束时刻，超过保留期就回收
+        if self._is_finished(engine):
+            finished_at = self._finished_at.setdefault(sid, now)
+            if now - finished_at > FINISHED_RETENTION:
+                self.remove(sid)
+            return None
+
+        # 重新开局（比如 guess_number start 重置了同一 session）：
+        # 旧一轮的结束时刻必须清掉，否则下一轮结束会被立刻当成过期回收。
+        self._finished_at.pop(sid, None)
+
+        checker = getattr(engine, "check_timeout", None)
+        if checker is None:
+            return None
+        result = checker(now)
+        if not result:
+            return None
+
+        event_type = str(result.get("type", ""))
+        if result.get("expired"):
+            # 大厅超时：事件只报一次（_seen_expired 去重），随后立刻回收 session
+            marked = self._mark_expired(sid, event_type)
+            self.remove(sid)
+            return {"session_id": sid, **result} if marked else None
+
+        if self._is_finished(engine):
+            # 判负/结束发生在本次检查里，结束时刻从此刻算起
+            self._finished_at[sid] = now
+        return {"session_id": sid, **result}
 
     def _mark_expired(self, session_id: str, event_type: str) -> bool:
         """登记一个已上报的超时事件。

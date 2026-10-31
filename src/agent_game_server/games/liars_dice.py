@@ -29,6 +29,11 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from agent_game_server.games.game_engine import GameEngine
+from agent_game_server.games.signal import ChangeSignal
+from agent_game_server.games.state_machine import StateMachine
+from agent_game_server.prompt import Prompt
+
 # ═══════════════════════════════════════════
 # 数据结构
 # ═══════════════════════════════════════════
@@ -49,12 +54,6 @@ class Call:
     quantity: int
     face: int
     message: str = ""
-
-
-from agent_game_server.games.game_engine import GameEngine
-from agent_game_server.games.signal import ChangeSignal
-from agent_game_server.games.state_machine import StateMachine
-from agent_game_server.prompt import Prompt
 
 # prompt 模板 — 修改 assets/liars_dice_prompts.py 后 POST /admin/reload-prompts 热更新
 _PROMPT_MODULE = "agent_game_server.assets.liars_dice_prompts"
@@ -84,6 +83,10 @@ class LiarsDiceEngine(GameEngine):
     game_name = "大话骰"
     player_mode = "multi"
 
+    # 本引擎的终态名与秘密键。公开状态里的 all_dice 是全场骰子，只有 admin 能看。
+    finished_states = frozenset({"finished"})
+    secret_keys = frozenset({"all_dice"})
+
     _prompts: Prompt | None = None  # 类级共享，避免每个实例都加载文件
 
     @classmethod
@@ -98,6 +101,7 @@ class LiarsDiceEngine(GameEngine):
         self.dice_per_player = dice_per_player
         # 回合判负时限（秒）。与 game_server 的等待预算 BLOCK_BUDGET 是两个数值：
         # 这里决定多久不行动判负，那边决定单次 state 调用最多挂起多久。
+        # 必须大于 BLOCK_BUDGET，否则判负总是发生在调用方拿到状态之前。
         self.turn_timeout = 60
         self._fsm = _LiarsDiceFSM("waiting")
         self.players: list[Player] = []
@@ -108,9 +112,6 @@ class LiarsDiceEngine(GameEngine):
         self.loser: int | None = None
         self.created_at = datetime.now(UTC).isoformat()
         self.last_action = time.time()
-        # 回合判负时限（秒）。与 game_server 的等待预算 BLOCK_BUDGET 是两个数值：
-        # 这里决定多久不行动判负，那边决定单次 state 调用最多挂起多久。
-        self.turn_timeout = 60
         # 状态变更信号，驱动 wait_for_change() 的阻塞等待
         self._signal = ChangeSignal()
 
@@ -342,6 +343,19 @@ class LiarsDiceEngine(GameEngine):
             loser = self.current_turn
             self.loser = loser
             self.last_action = now
+            # 超时与开盅同样是"输掉本轮"：本轮叫数必须清零。留着上一手的叫数，
+            # 下家既不能加码（可能已超过场上骰子总数）也不能弃权，只能替别人开盅，
+            # 胜负就被别人的超时决定了。历史里记一条，与开盅记录同构。
+            if self.current_call is not None:
+                self.call_history.append(
+                    Call(
+                        player_idx=loser,
+                        quantity=0,
+                        face=0,
+                        message="超时判负（本轮作废）",
+                    )
+                )
+            self.current_call = None
             if not self._eliminate(loser):
                 self.current_turn = self._next_alive_index(loser)
             # 判负同样要唤醒等待者，否则等待方要等满整个预算才知道对局已结束

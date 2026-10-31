@@ -44,7 +44,8 @@ MCP 端点与 REST 端点跑在同一个 FastAPI app 上（`game_server.create_a
 | `POST /games/{session_id}/action` | 执行动作；`action=state` 走阻塞等待 |
 | `GET /games/{session_id}` | 公开状态，已剥离 `SECRET_STATE_KEYS`（`target` / `all_dice`） |
 | `GET /games/{session_id}/state/{player_index}` | 玩家视角（多人游戏需 `player_token`），立即返回不等待 |
-| `/admin/*` | Dashboard、对局列表与详情、WebSocket 推送、提示词热重载 |
+| `/admin/*` | Dashboard、对局列表与详情、提示词热重载（全部需 `X-Admin-Token`） |
+| `WS /admin/ws?token=` | 实时推送；浏览器不能设自定义头，token 走查询参数 |
 
 ## 项目结构
 
@@ -73,6 +74,7 @@ agent-game/
 │           ├── guess_number.py        # 猜数字引擎
 │           └── liars_dice.py          # 大话骰引擎
 ├── tests/
+│   ├── conftest.py                    # 共享夹具：造局、摆骰子、起 app、连 MCP
 │   ├── test_engine.py                 # 猜数字引擎
 │   ├── test_liars_dice.py             # 大话骰引擎
 │   ├── test_rules.py                  # 大话骰规则：叫数合法性 / 淘汰 / 身份校验
@@ -82,7 +84,18 @@ agent-game/
 │   ├── test_mcp_server.py             # MCP over HTTP（ASGI 内存传输，不监听 socket）
 │   ├── test_wait.py                   # ChangeSignal 与阻塞式等待
 │   ├── test_prompts.py                # 提示词模板：时间数值由调用方传入，不写死秒数
-│   └── test_poller.py                 # 超时轮询与 admin 广播
+│   ├── test_prompt_safety.py          # 提示词层永不向调用方抛异常
+│   ├── test_poller.py                 # 超时轮询与 admin 广播
+│   ├── test_invariants.py             # 规则不变量（百搭、入座时机、通知、超时清叫数）
+│   ├── test_full_game.py              # 端到端整局（含中途超时）
+│   ├── test_contract.py               # REST 与 MCP 对同一输入必须同类回答
+│   ├── test_http_contract.py          # HTTP 输入健壮性与 admin 鉴权
+│   ├── test_mcp_identity.py           # session_id 不证明身份
+│   ├── test_block_budget.py           # timeout 解析器唯一实现
+│   ├── test_cli.py                    # 启动路径与 admin token 打印
+│   └── test_meta.py                   # 元测试：套件自身的结构与契约
+├── scripts/
+│   └── mutation_check.py              # 变异测试：验证套件真的能抓到 bug
 ├── docs/
 │   └── issues/                        # 设计与实施记录（001 阻塞等待、002 MCP 迁移）
 ├── pyproject.toml
@@ -107,6 +120,11 @@ agent-game/
 | `check_timeout(now)` | 超时检查 |
 | `wait_for_change(player_index, timeout)` | 可选，`async`。回合制游戏实现它，让非当前回合的 `state` 调用在服务端挂起 |
 | `_find_player_by_token(token)` | 可选。多人引擎实现它，`player_token` 身份复用依赖这个方法 |
+| `finished_states` | 可选类属性。该引擎的终态名集合；不声明则用默认的 `{"finished", "won", "lost"}` |
+| `secret_keys` | 可选类属性。公开状态里要剥掉的键；不声明则用默认的 `{"target", "all_dice"}` |
+
+后两个属性是"零改动加游戏"的一部分：终态叫 `draw` 或要藏一个 `solution` 字段的引擎，
+只需在自己的类上声明，不用回来改框架。
 
 ## 快速开始
 
@@ -159,6 +177,29 @@ Agent MCP 配置：
 | `AGENT_GAME_ADMIN_TOKEN` | Admin 鉴权令牌。未设置时在导入 `game_server` 时随机生成，并由 `cli.py` 在启动时打印出来 |
 
 只有这一个环境变量，没有其它开关。
+
+## 测试与验收
+
+```bash
+uv sync --all-groups
+uv run ruff check .                     # 静态检查
+uv run coverage run -m pytest           # 单元测试 + 覆盖率（门槛 90%）
+uv run python scripts/mutation_check.py # 变异测试：验收判据
+```
+
+三者的分工：
+
+| 命令 | 回答的问题 |
+|---|---|
+| `pytest` | 代码有没有坏 |
+| `coverage report` | 哪一行没被执行过 |
+| `mutation_check.py` | **测试有没有用** —— 往源码注入缺陷，套件会不会红 |
+
+覆盖率做不到第三件事。它只说明"这行被跑过"，不说明"这条规则被守住"——
+一个把全场骰子固定成同一个数的测试可以跑遍所有代码行，却从未触达百搭规则。
+
+`mutation_check.py` 内置 50 个变异体，每个都是真实缺陷（删掉一条通知、放宽一处
+鉴权、把胜负判反）。全部被杀死才算通过。已知等价变异体会被标出来并说明原因。
 
 ## 当前游戏
 

@@ -163,13 +163,14 @@ def test_poller_keeps_polling_after_serialization_failure(isolated):
     asyncio.run(scenario())
 
 
+def _explode(self, now):
+    """引擎的 check_timeout 直接抛异常。"""
+    raise RuntimeError("check_timeout 炸了")
+
+
 def test_poller_survives_engine_raising_in_check_timeout(isolated):
     """一个引擎的 check_timeout 抛异常，不能带走整个轮询循环。"""
-
-    def explode(self, now):
-        raise RuntimeError("check_timeout 炸了")
-
-    gm = isolated(_bare_engine(check_timeout=explode))
+    gm = isolated(_bare_engine(check_timeout=_explode))
     gm.create("bare")
     broadcast = game_server.AdminBroadcast(gm)
 
@@ -183,14 +184,78 @@ def test_poller_survives_engine_raising_in_check_timeout(isolated):
     asyncio.run(scenario())
 
 
+def test_bad_engine_does_not_block_other_sessions(isolated):
+    """坏引擎被跳过，其余对局照常结算超时。
+
+    这是 `AGENTS.md`「一个坏引擎不能杀死整个服务」的真正含义：不只是后台轮询
+    活着，而是**别的对局仍然会超时**。REST 的 state 分支在请求内直接调
+    `check_timeouts()`，隔离失效时一个坏引擎能把无关对局打成 500。
+    """
+
+    class _ExpiringEngine:
+        game_type = "expiring"
+        game_name = "会超时的引擎"
+        player_mode = "single"
+
+        def __init__(self):
+            self.expired = False
+
+        def get_public_state(self):
+            return {"status": "bidding"}
+
+        def check_timeout(self, now):
+            if not self.expired:
+                self.expired = True
+                return {"type": "turn_timeout", "expired": False}
+            return None
+
+    gm = isolated(_bare_engine(check_timeout=_explode), _ExpiringEngine)
+    gm.create("bare")  # 坏引擎排在前面：没有隔离时它会中断整轮
+    sid, _engine = gm.create("expiring")
+
+    events = gm.check_timeouts()
+
+    assert [event["session_id"] for event in events] == [sid], (
+        "坏引擎挡住了同一轮里其它 session 的超时结算"
+    )
+
+
 def test_poller_logs_iteration_failure(isolated, caplog):
-    """异常被记进日志，而不是被无声吞掉。"""
+    """坏引擎的异常被记进日志，而不是被无声吞掉。
 
-    def explode(self, now):
-        raise RuntimeError("check_timeout 炸了")
-
-    gm = isolated(_bare_engine(check_timeout=explode))
+    异常现在在 `check_timeouts` 的 per-session 循环里就被隔离（记 warning），
+    不再一路冒到轮询循环。所以这里断言的是引擎级那条日志——它比轮询级那条更精确：
+    日志里带着出问题的 session 与 game_type，能直接定位到引擎。
+    """
+    gm = isolated(_bare_engine(check_timeout=_explode))
     gm.create("bare")
+    broadcast = game_server.AdminBroadcast(gm)
+
+    async def scenario():
+        await _run_poller_for(broadcast, seconds=0.7)
+        await broadcast.cancel_all()
+
+    with caplog.at_level(logging.WARNING, logger="agent_game_server.manager"):
+        asyncio.run(scenario())
+
+    assert any(
+        "跳过异常 session" in record.getMessage() for record in caplog.records
+    ), "坏引擎的异常没有留下日志"
+    assert any(record.exc_info for record in caplog.records), "日志里要带堆栈"
+
+
+def test_poller_survives_failure_outside_engine_isolation(isolated, caplog):
+    """引擎隔离之外的失败（比如 list_sessions 整体抛）仍由轮询循环兜住。
+
+    与上一条是两个层次：引擎级隔离保证"一个坏引擎不影响其它对局"，
+    轮询级兜底保证"结算逻辑本身出问题时后台任务不死"。
+    """
+
+    class _BrokenManager(GameManager):
+        def check_timeouts(self, now=None):
+            raise RuntimeError("结算整体失败")
+
+    gm = _BrokenManager()
     broadcast = game_server.AdminBroadcast(gm)
 
     async def scenario():
@@ -202,7 +267,7 @@ def test_poller_logs_iteration_failure(isolated, caplog):
 
     assert any(
         "poll iteration failed" in record.getMessage() for record in caplog.records
-    ), "轮询异常没有留下日志"
+    ), "轮询级异常没有留下日志"
 
 
 def test_admin_state_signature_never_raises(isolated):
@@ -485,46 +550,61 @@ def test_game_engine_protocol_has_no_runtime_stubs():
     assert "describe_tools" not in GameEngine.__dict__
 
 
+def _reload_prompts_http(gm):
+    """用一份独立 app 真发一次 POST，验证鉴权与返回体。
+
+    走 HTTP 而不是直接调函数：`reload_prompts` 现在从 `request.app.state.manager`
+    取对局表，手搓的假 Request 没有 app，测不到真实路径。
+    """
+    from fastapi.testclient import TestClient
+
+    app = game_server.create_app(gm)
+    with TestClient(app) as client:
+        ok = client.post(
+            "/admin/reload-prompts",
+            headers={"X-Admin-Token": game_server._ADMIN_TOKEN},
+        )
+        denied = client.post("/admin/reload-prompts")
+    return ok, denied
+
+
 def test_reload_prompts_excludes_engine_without_prompts(isolated, monkeypatch):
     """没有自己 get_prompts 的引擎不应出现在 reloaded 列表里。"""
     gm = isolated(GuessNumberEngine, _NoPromptsEngine)
     prompts = _CountingPrompts()
     monkeypatch.setattr(GuessNumberEngine, "get_prompts", classmethod(lambda cls: prompts))
 
-    class _Request:
-        headers = {"X-Admin-Token": game_server._ADMIN_TOKEN}
+    ok, denied = _reload_prompts_http(gm)
 
-    result = game_server.reload_prompts(_Request())
-
-    assert result["reloaded"] == ["guess_number"]
-    assert "no_prompts" not in result["reloaded"]
+    assert ok.status_code == 200
+    assert ok.json()["reloaded"] == ["guess_number"]
+    assert "no_prompts" not in ok.json()["reloaded"]
     assert prompts.reloads == 1
+    # 无 token 必须 403：曾经这条写接口完全没有鉴权
+    assert denied.status_code == 403
+    assert prompts.reloads == 1, "被拒绝的请求不该触发重载"
 
 
 def test_reload_prompts_includes_both_real_engines(isolated):
     """两个真实引擎都有自己的提示词，都应被重载。"""
-    isolated(GuessNumberEngine, LiarsDiceEngine)
+    gm = isolated(GuessNumberEngine, LiarsDiceEngine)
 
-    class _Request:
-        headers = {"X-Admin-Token": game_server._ADMIN_TOKEN}
+    ok, _denied = _reload_prompts_http(gm)
 
-    result = game_server.reload_prompts(_Request())
-
-    assert set(result["reloaded"]) == {"guess_number", "liars_dice"}
+    assert ok.status_code == 200
+    assert set(ok.json()["reloaded"]) == {"guess_number", "liars_dice"}
 
 
 def test_reload_prompts_is_idempotent(isolated):
     """连续两次热重载都不报错，且都返回同一份列表。"""
-    isolated(GuessNumberEngine, LiarsDiceEngine)
+    gm = isolated(GuessNumberEngine, LiarsDiceEngine)
 
-    class _Request:
-        headers = {"X-Admin-Token": game_server._ADMIN_TOKEN}
+    first, _denied = _reload_prompts_http(gm)
+    second, _denied2 = _reload_prompts_http(gm)
 
-    first = game_server.reload_prompts(_Request())
-    second = game_server.reload_prompts(_Request())
-
-    assert first["ok"] is True and second["ok"] is True
-    assert first["reloaded"] == second["reloaded"]
+    assert first.status_code == 200 and second.status_code == 200
+    assert first.json()["ok"] is True and second.json()["ok"] is True
+    assert first.json()["reloaded"] == second.json()["reloaded"]
 
 
 # ═══════════════════════════════════════════

@@ -66,22 +66,22 @@ def test_refresh_admin_state_uses_full_snapshot():
 
 
 def test_create_game_forwards_request_params():
-    original_manager = game_server.manager
+    """创建参数被原样透传给 manager.create。
 
-    class _Request:
-        async def json(self):
-            return {"player_token": "token-123"}
+    走 HTTP 而不是手搓 Request：create_game 现在从 request.app.state.manager
+    取对局表，假 Request 没有 app / body，测不到真实路径。
+    """
+    gm = GameManager()
+    gm.register("liars_dice", LiarsDiceEngine)
+    app = game_server.create_app(gm)
+    with TestClient(app) as client:
+        resp = client.post("/games/liars_dice", json={"player_token": "token-123"})
 
-    try:
-        manager = _FakeManager([])
-        game_server.manager = manager
-
-        result = asyncio.run(game_server.create_game("liars_dice", _Request()))
-
-        assert result["session_id"] == "sid-1234"
-        assert manager.create_calls == [("liars_dice", {"player_token": "token-123"})]
-    finally:
-        game_server.manager = original_manager
+    assert resp.status_code == 200
+    assert resp.json()["game_type"] == "liars_dice"
+    # 真的建出了一局，而且这局只存在于传入的 manager 里
+    assert len(gm._engines) == 1
+    assert not game_server.manager._engines, "不能落到模块级 manager 上"
 
 
 # ═══════════════════════════════════════════

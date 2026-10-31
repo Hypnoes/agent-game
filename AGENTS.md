@@ -78,9 +78,25 @@ app.router.routes.append(
 
 **症状：** 直接把 `get_public_state()` 回给 Agent，等于把答案和对手的骰子一起送出去，游戏当场失去意义。
 
-秘密信息只有 `/admin/games/{id}` 一个出口（过 `_check_admin_token` 之后）。新增带秘密字段的引擎时，把字段名加进 `SECRET_STATE_KEYS`。
+秘密信息只有 `/admin/games/{id}` 一个出口（过 `_check_admin_token` 之后）。新增带秘密字段的引擎时，在自己的类上声明 `secret_keys`——那是权威来源；`SECRET_STATE_KEYS` 只是"引擎没声明"时的默认集合。
 
-## 9. Admin token 永远存在，且绝不交给未出示它的人
+## 9. 回合超时与开盅对"输掉本轮"的处理必须一致
+
+`check_timeout` 的回合超时分支与 `_challenge` 都必须 `self.current_call = None`。
+
+**症状（曾经真实存在）：** 超时分支只掉骰、换回合，不清本轮叫数。下家面对一个
+无法再加码的僵尸叫数（数量可能已超过掉骰后的总数），既不能加码也不能弃权，
+只能替别人的超时开盅——胜负由别人的超时决定。3 人局可稳定复现。
+
+## 10. `check_timeouts` 必须按引擎隔离异常
+
+per-session 循环要 `try/except Exception`，记日志后继续下一个。
+
+**症状：** 一个引擎的 `check_timeout` 抛异常会中断整轮结算，其余对局不再超时。
+REST 的 `state` 分支在请求内直接调用 `check_timeouts()`，所以一个坏引擎能把
+**无关对局**打成 500。后台轮询有兜底，请求内路径没有。
+
+## 11. Admin token 永远存在，且绝不交给未出示它的人
 
 `_ADMIN_TOKEN` 在导入 `game_server` 时解析一次：有 `AGENT_GAME_ADMIN_TOKEN` 就用它，没有就 `secrets.token_urlsafe(24)` 当场生成。没有"不设 token 就不校验"这个分支。
 
@@ -89,3 +105,25 @@ app.router.routes.append(
 **症状：** 把 token 注入给匿名访问者，等于把 `/admin/games` 的全部秘密信息对任何能连上端口的人敞开；反过来退化成"没配 token 就不校验"更糟，那连"配置错了"都不会有人发现。
 
 `_token_matches()` 按 UTF-8 字节做 `secrets.compare_digest`：`str` 版遇到非 ASCII 会抛 `TypeError`，一个带非 ASCII 的 `X-Admin-Token` 头就能把 403 变成 500。
+
+`/admin/ws` 同样要鉴权：浏览器 WebSocket 不能设自定义头，token 走 `?token=`，
+不匹配以 1008 关闭。
+
+## 12. 身份校验必须与传输无关，且在等待之前
+
+校验逻辑在 `games/game_engine.py::player_identity_error()`，REST 与 MCP 共用。
+两条传输都必须在进入 `wait_for_change` **之前**调用它。
+
+**症状：** 两条传输各自实现一遍时语义分叉了——REST 先校验再等待，MCP 先等待
+再校验。同一个 token 打错的 `state` 调用，REST 立刻 400，MCP 白等满 55 秒。
+
+## 13. 测试不准用 `skip` 给"能力缺失"让路
+
+核心能力被删掉时套件必须红。`pytest.skip` 让"功能删了"和"功能正常"在退出码上
+一样——曾经守住阻塞等待的两条主验收用例就是这样写的，删掉整个 `wait_for_change`
+之后它们变成 skipped，套件仍然全绿。
+
+## 14. 每条约束都要有对应的看门用例
+
+约束写在本文档里、如果没有任何用例对应它，它实际上只是一段注释。
+`tests/test_meta.py::GUARDED_INVARIANTS` 维护这张映射表，新增约束时同步登记。

@@ -65,8 +65,16 @@ class StateMachine(ABC):
 
     # ── 钩子（子类按需 override）──
 
-    def _on_before_transition(self, to: str):
-        """转移前执行。子类可做额外校验、日志等。"""
+    def _on_before_transition(self, to: str):  # noqa: B027 — 刻意的空钩子
+        """转移前执行。子类可做额外校验、日志等。
 
-    def _on_after_transition(self, to: str):
-        """转移后执行。子类可更新辅助数据、发事件等。"""
+        默认实现是空钩子，不是抽象方法：子类不实现它是合法用法（大多数状态机
+        不需要钩子）。`pragma: no cover` 不在这里用——钩子被子类覆盖后本方法
+        不会执行，但它属于公开可覆盖的扩展点，删掉就改变了契约。
+        """
+
+    def _on_after_transition(self, to: str):  # noqa: B027 — 刻意的空钩子
+        """转移后执行。子类可更新辅助数据、发事件等。
+
+        同 `_on_before_transition`：空钩子是约定，不是遗漏。
+        """

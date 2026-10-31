@@ -8,7 +8,9 @@
 import math
 from typing import Any
 
-__version__ = "0.2.2"
+# 版本号的权威来源。`pyproject.toml` 里也写了一份——打包工具读的是它。
+# 两份必须一致，`tests/test_meta.py::test_version_matches_pyproject` 守着这条。
+__version__ = "0.3.0"
 
 # 单次 state 调用的最长挂起时间（秒）。低于 MCP 消费端默认的 60 秒工具调用
 # 超时，保证超时总是由本服务先发生，Agent 收到的是状态文本而非传输层错误。

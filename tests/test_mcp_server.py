@@ -8,19 +8,20 @@
 """
 
 import asyncio
-import json
 import math
 import time
-from contextlib import asynccontextmanager
 
-import httpx
 import pytest
 
-from agent_game_server import config, game_server, mcp_server
-from agent_game_server.config import BLOCK_BUDGET, MAX_MCP_SESSION_CACHE, parse_block_budget
+from agent_game_server import config, mcp_server
+from agent_game_server.config import (
+    BLOCK_BUDGET,
+    MAX_MCP_SESSION_CACHE,
+    parse_block_budget,
+)
+from agent_game_server.game_server import create_app
 from agent_game_server.games.guess_number import GuessNumberEngine
 from agent_game_server.games.liars_dice import LiarsDiceEngine
-from agent_game_server.game_server import create_app
 from agent_game_server.mcp_server import (
     _engine_finished,
     _engine_phase,
@@ -28,14 +29,6 @@ from agent_game_server.mcp_server import (
     _remember_session,
     _run_action,
 )
-
-PROTOCOL_VERSION = "2025-11-25"
-
-# 每个请求都必须带这两个头，否则 SDK 拒绝建立会话
-BASE_HEADERS = {
-    "Accept": "application/json, text/event-stream",
-    "Content-Type": "application/json",
-}
 
 EXPECTED_TOOLS = {
     "guess_number_start",
@@ -48,146 +41,12 @@ EXPECTED_TOOLS = {
 }
 
 
-# ═══════════════════════════════════════════
-# SSE 与 JSON-RPC 辅助
-# ═══════════════════════════════════════════
-
-
-def parse_sse(text: str) -> list[dict]:
-    """把响应体里的 SSE 帧还原成 JSON-RPC 消息列表。"""
-    messages: list[dict] = []
-    buffer: list[str] = []
-    for line in text.splitlines():
-        if line.startswith("data: "):
-            buffer.append(line[6:])
-        elif not line.strip() and buffer:
-            messages.append(json.loads("".join(buffer)))
-            buffer = []
-    if buffer:
-        messages.append(json.loads("".join(buffer)))
-    return messages
-
-
-class McpHarness:
-    """对 /mcp 的最小 JSON-RPC 客户端。"""
-
-    def __init__(self, client: httpx.AsyncClient):
-        self._client = client
-        self._next_id = 0
-        self._last_session_id: str | None = None
-
-    async def open_session(self) -> dict[str, str]:
-        """完成 initialize 握手，返回带 mcp-session-id 的请求头。"""
-        message = await self._post(
-            BASE_HEADERS,
-            {
-                "jsonrpc": "2.0",
-                "id": self._take_id(),
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": PROTOCOL_VERSION,
-                    "capabilities": {},
-                    "clientInfo": {"name": "pytest", "version": "1"},
-                },
-            },
-        )
-        assert message["result"]["serverInfo"]["name"] == "agent-game"
-        assert self._last_session_id, "initialize 响应缺少 mcp-session-id 头"
-
-        session_headers = {
-            **BASE_HEADERS,
-            "mcp-session-id": self._last_session_id,
-        }
-        resp = await self._client.post(
-            "/mcp",
-            headers=session_headers,
-            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        )
-        # 通知没有响应体，SDK 回 200 或 202 都算成功
-        assert resp.status_code < 400, resp.text
-        return session_headers
-
-    async def request(self, session: dict[str, str], method: str, params: dict) -> dict:
-        return await self._post(
-            session,
-            {"jsonrpc": "2.0", "id": self._take_id(), "method": method, "params": params},
-        )
-
-    async def list_tools(self, session: dict[str, str]) -> list[dict]:
-        return (await self.request(session, "tools/list", {}))["result"]["tools"]
-
-    async def call_tool(self, session: dict[str, str], name: str, arguments: dict) -> dict:
-        return await self.request(
-            session, "tools/call", {"name": name, "arguments": arguments}
-        )
-
-    async def call_tool_text(
-        self, session: dict[str, str], name: str, arguments: dict
-    ) -> str:
-        """调用工具并断言成功，返回响应文本。"""
-        result = (await self.call_tool(session, name, arguments))["result"]
-        text = result["content"][0]["text"]
-        assert not result.get("isError"), text
-        return text
-
-    # ── 内部 ──
-
-    def _take_id(self) -> int:
-        self._next_id += 1
-        return self._next_id
-
-    async def _post(self, headers: dict[str, str], payload: dict) -> dict:
-        resp = await self._client.post("/mcp", headers=headers, json=payload)
-        assert resp.status_code == 200, resp.text
-        if "mcp-session-id" in resp.headers:
-            self._last_session_id = resp.headers["mcp-session-id"]
-        return parse_sse(resp.text)[0]
-
-
-@asynccontextmanager
-async def mcp_harness():
-    """构建独立 app，进入 lifespan，产出驱动器。"""
-    app = create_app()
-    async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            yield McpHarness(client)
-
-
-# ═══════════════════════════════════════════
-# 夹具
-# ═══════════════════════════════════════════
-
-
-@pytest.fixture
-def anyio_backend():
-    """只跑 asyncio 后端，避免 anyio 插件再参数化到未安装的 trio。"""
-    return "asyncio"
-
-
-@pytest.fixture(autouse=True)
-def isolated_state():
-    """每个用例独占全新的对局表与 MCP 会话缓存。
-
-    GameManager 与 _MCP_SESSIONS 都是模块级单例（test_game_server.py 依赖
-    game_server.manager 这个模块级名字），这里只清空内容，不替换对象。
-    """
-    engines = dict(game_server.manager._engines)
-    created_at = dict(game_server.manager._created_at)
-    sessions = dict(mcp_server._MCP_SESSIONS)
-
-    game_server.manager._engines.clear()
-    game_server.manager._created_at.clear()
-    mcp_server._MCP_SESSIONS.clear()
-    try:
-        yield
-    finally:
-        game_server.manager._engines.clear()
-        game_server.manager._engines.update(engines)
-        game_server.manager._created_at.clear()
-        game_server.manager._created_at.update(created_at)
-        mcp_server._MCP_SESSIONS.clear()
-        mcp_server._MCP_SESSIONS.update(sessions)
+# SSE 解析、McpHarness、mcp_harness 与 anyio_backend 都在 conftest.py。
+# 本文件只保留"在什么对局上验证什么"的断言。
+#
+# 注意 `isolated_state` 夹具已经删除：它手工清空模块级的 _engines / _created_at /
+# _MCP_SESSIONS，却从来没管过 _finished_at 与 _seen_expired。现在 mcp_harness
+# 为每个用例新建 manager，隔离是结构性的而不是靠清理。
 
 
 # ═══════════════════════════════════════════
@@ -200,9 +59,9 @@ def cached_session(session: dict[str, str], game_type: str) -> str | None:
     return mcp_server._MCP_SESSIONS.get(session["mcp-session-id"], {}).get(game_type)
 
 
-def engine_with_player(name: str):
-    """返回包含指定玩家的引擎。"""
-    for engine in game_server.manager._engines.values():
+def engine_with_player(manager, name: str):
+    """在指定 manager 的活动对局里找包含该玩家的引擎。"""
+    for engine in manager._engines.values():
         for player in getattr(engine, "players", []):
             if player.name == name:
                 return engine
@@ -222,7 +81,7 @@ def token_of(engine, name: str) -> str:
 
 
 @pytest.mark.anyio
-async def test_initialize_and_list_tools():
+async def test_initialize_and_list_tools(mcp_harness):
     """握手成功，7 个工具全部返回且 schema 完整。"""
     async with mcp_harness() as mcp:
         session = await mcp.open_session()
@@ -245,8 +104,36 @@ async def test_initialize_and_list_tools():
         assert served[name]["description"] == original["description"]
 
 
+def test_tool_schemas_declare_the_fields_the_engine_requires():
+    """schema 的 required 必须与引擎实际要求的入参一致。
+
+    上一条用例比较的是"服务端返回"与"引擎声明"，两边都来自同一份源码，
+    所以把引擎自己的 required 清空之后它照样通过——声明和实现一起改，比较就失去意义。
+    这里把"哪些字段是必填的"写成外部契约：这些字段缺了引擎会 KeyError，
+    客户端应当被 schema 挡在发请求之前。
+    """
+    schemas = {tool["name"]: tool["input_schema"] for tool in GuessNumberEngine.describe_tools()}
+    schemas.update(
+        {tool["name"]: tool["input_schema"] for tool in LiarsDiceEngine.describe_tools()}
+    )
+
+    assert set(schemas["guess_number_guess"]["required"]) == {"number"}
+    assert set(schemas["liars_dice_join"]["required"]) == {"player_name"}
+
+    # 身份 token 是这三个动作的必填项，见 AGENTS.md #4。缺了它引擎会直接拒绝，
+    # 让客户端在 schema 层就知道，比让它发出去再收 403 好。
+    for tool in ("liars_dice_state", "liars_dice_bid", "liars_dice_challenge"):
+        assert "player_index" in schemas[tool]["required"], tool
+        assert "player_token" in schemas[tool]["required"], tool
+
+    # 每个 required 字段都必须真的在 properties 里声明，不能指向不存在的参数
+    for name, schema in schemas.items():
+        declared = set(schema.get("properties", {}))
+        assert set(schema.get("required", [])) <= declared, name
+
+
 @pytest.mark.anyio
-async def test_tool_call_routes_to_engine():
+async def test_tool_call_routes_to_engine(mcp_harness):
     """工具名解析后落到对应引擎。"""
     async with mcp_harness() as mcp:
         session = await mcp.open_session()
@@ -258,12 +145,12 @@ async def test_tool_call_routes_to_engine():
 
         await mcp.call_tool_text(session, "guess_number_start", {})
 
-    liars = engine_with_player("Alice")
+    liars = engine_with_player(mcp.manager, "Alice")
     assert isinstance(liars, LiarsDiceEngine)
     assert liars.phase == "waiting"
 
     guess_engines = [
-        e for e in game_server.manager._engines.values() if isinstance(e, GuessNumberEngine)
+        e for e in mcp.manager._engines.values() if isinstance(e, GuessNumberEngine)
     ]
     assert len(guess_engines) == 1
 
@@ -272,7 +159,7 @@ async def test_tool_call_routes_to_engine():
 
 
 @pytest.mark.anyio
-async def test_session_isolation():
+async def test_session_isolation(mcp_harness):
     """两个 MCP 会话各自缓存，互不干扰。"""
     async with mcp_harness() as mcp:
         first = await mcp.open_session()
@@ -282,23 +169,23 @@ async def test_session_isolation():
         await mcp.call_tool_text(first, "guess_number_start", {})
         first_sid = cached_session(first, "guess_number")
         await mcp.call_tool_text(first, "guess_number_guess", {"number": 1})
-        assert game_server.manager.get(first_sid).guess_count == 1
+        assert mcp.manager.get(first_sid).guess_count == 1
 
         await mcp.call_tool_text(second, "guess_number_start", {})
         second_sid = cached_session(second, "guess_number")
 
         assert second_sid != first_sid
-        assert game_server.manager.get(second_sid).guess_count == 0
+        assert mcp.manager.get(second_sid).guess_count == 0
 
         # 回到第一条连接：仍然指向它自己的对局，未被第二条影响
         await mcp.call_tool_text(first, "guess_number_state", {})
         assert cached_session(first, "guess_number") == first_sid
-        assert game_server.manager.get(first_sid).guess_count == 1
-        assert game_server.manager.get(second_sid).guess_count == 0
+        assert mcp.manager.get(first_sid).guess_count == 1
+        assert mcp.manager.get(second_sid).guess_count == 0
 
 
 @pytest.mark.anyio
-async def test_player_token_identity_wins():
+async def test_player_token_identity_wins(mcp_harness):
     """同一 token 换一条 MCP 连接重连，回到原对局。
 
     这是本次改动的核心回归用例：身份由 player_token 决定，mcp-session-id
@@ -311,7 +198,7 @@ async def test_player_token_identity_wins():
         bob_conn = await mcp.open_session()
         await mcp.call_tool_text(bob_conn, "liars_dice_join", {"player_name": "Bob"})
 
-        engine = engine_with_player("Bob")
+        engine = engine_with_player(mcp.manager, "Bob")
         assert isinstance(engine, LiarsDiceEngine)
         assert engine.phase == "bidding"
         original_sid = cached_session(bob_conn, "liars_dice")
@@ -329,8 +216,8 @@ async def test_player_token_identity_wins():
         assert cached_session(reconnect, "liars_dice") == original_sid
         assert "你的骰子" in text
         # 没有为同一个人再开一局
-        assert len(game_server.manager._engines) == 1
-        assert game_server.manager.get(original_sid) is engine
+        assert len(mcp.manager._engines) == 1
+        assert mcp.manager.get(original_sid) is engine
 
         # 再换一条连接、同一个 token：仍然回到原对局
         again = await mcp.open_session()
@@ -340,20 +227,27 @@ async def test_player_token_identity_wins():
             {"player_index": 0, "player_token": alice_token, "timeout": 0.1},
         )
         assert cached_session(again, "liars_dice") == original_sid
-        assert len(game_server.manager._engines) == 1
+        assert len(mcp.manager._engines) == 1
 
         # 对照：不带 token 的新连接不会白捡现有对局，身份来自 token 而非连接
         stranger = await mcp.open_session()
         await mcp.call_tool_text(stranger, "liars_dice_join", {"player_name": "Carol"})
         assert cached_session(stranger, "liars_dice") != original_sid
-        assert len(game_server.manager._engines) == 2
+        assert len(mcp.manager._engines) == 2
 
 
 @pytest.mark.anyio
-async def test_state_blocks_until_opponent_moves():
-    """端到端等待语义：非当前回合的 state 挂起，对手行动后返回。"""
-    if not hasattr(LiarsDiceEngine, "wait_for_change"):
-        pytest.skip("blocking wait not present")
+async def test_state_blocks_until_opponent_moves(mcp_harness):
+    """端到端等待语义：非当前回合的 state 挂起，对手行动后返回。
+
+    这里不做 `hasattr` 探测，也**不允许** skip。阻塞等待是这个服务的核心能力，
+    功能被删掉时套件必须红。曾经这两条主验收用例写成 `pytest.skip(...)`，
+    于是删掉整个 wait_for_change 方法之后，它们变成 skipped——在 pytest 里
+    等于通过，AGENTS.md 里"别简化回一次性返回"的约束就此失去看门人。
+    """
+    assert hasattr(LiarsDiceEngine, "wait_for_change"), (
+        "LiarsDiceEngine 必须实现 wait_for_change：阻塞等待是核心能力，不是可选项"
+    )
 
     async with mcp_harness() as mcp:
         alice_conn = await mcp.open_session()
@@ -361,7 +255,7 @@ async def test_state_blocks_until_opponent_moves():
         bob_conn = await mcp.open_session()
         await mcp.call_tool_text(bob_conn, "liars_dice_join", {"player_name": "Bob"})
 
-        engine = engine_with_player("Bob")
+        engine = engine_with_player(mcp.manager, "Bob")
         assert engine.phase == "bidding"
         connections = {0: alice_conn, 1: bob_conn}
         tokens = {i: engine.players[i].token for i in range(len(engine.players))}
@@ -402,7 +296,7 @@ async def test_state_blocks_until_opponent_moves():
 
 
 @pytest.mark.anyio
-async def test_finished_game_not_reused():
+async def test_finished_game_not_reused(mcp_harness):
     """对局结束后重新加入得到新对局。"""
     async with mcp_harness() as mcp:
         alice_conn = await mcp.open_session()
@@ -410,7 +304,7 @@ async def test_finished_game_not_reused():
         bob_conn = await mcp.open_session()
         await mcp.call_tool_text(bob_conn, "liars_dice_join", {"player_name": "Bob"})
 
-        engine = engine_with_player("Bob")
+        engine = engine_with_player(mcp.manager, "Bob")
         connections = {0: alice_conn, 1: bob_conn}
         tokens = {i: engine.players[i].token for i in range(len(engine.players))}
 
@@ -435,7 +329,7 @@ async def test_finished_game_not_reused():
         assert engine.phase == "finished"
 
         old_sid = cached_session(alice_conn, "liars_dice")
-        assert game_server.manager.get(old_sid) is engine
+        assert mcp.manager.get(old_sid) is engine
 
         # 同一个玩家带着原 token 重新加入：不能复活已结束的对局
         await mcp.call_tool_text(
@@ -447,8 +341,8 @@ async def test_finished_game_not_reused():
         new_sid = cached_session(alice_conn, "liars_dice")
 
     assert new_sid != old_sid
-    assert game_server.manager.get(old_sid).phase == "finished"
-    new_engine = game_server.manager.get(new_sid)
+    assert mcp.manager.get(old_sid).phase == "finished"
+    new_engine = mcp.manager.get(new_sid)
     assert isinstance(new_engine, LiarsDiceEngine)
     assert new_engine.phase == "waiting"
     assert len(new_engine.players) == 1
@@ -456,7 +350,7 @@ async def test_finished_game_not_reused():
 
 
 @pytest.mark.anyio
-async def test_unknown_tool_returns_error():
+async def test_unknown_tool_returns_error(mcp_harness):
     """未知工具返回错误结果，而不是 500。"""
     async with mcp_harness() as mcp:
         session = await mcp.open_session()
@@ -628,7 +522,7 @@ async def test_run_action_rejects_non_numeric_timeout():
 
 
 @pytest.mark.anyio
-async def test_timeout_zero_returns_promptly_over_http():
+async def test_timeout_zero_returns_promptly_over_http(mcp_harness):
     """端到端：非当前回合的 state 带 timeout=0 立刻返回，不挂起。"""
     async with mcp_harness() as mcp:
         alice_conn = await mcp.open_session()
@@ -636,7 +530,7 @@ async def test_timeout_zero_returns_promptly_over_http():
         bob_conn = await mcp.open_session()
         await mcp.call_tool_text(bob_conn, "liars_dice_join", {"player_name": "Bob"})
 
-        engine = engine_with_player("Bob")
+        engine = engine_with_player(mcp.manager, "Bob")
         not_turn = 1 - engine.current_turn
         token = engine.players[not_turn].token
 
@@ -747,7 +641,7 @@ def test_finished_guess_number_is_not_reused():
 
 
 @pytest.mark.anyio
-async def test_explicit_session_id_without_token_is_refused():
+async def test_explicit_session_id_without_token_is_refused(mcp_harness):
     """新连接拿 session_id 硬指别人的对局：必须拒绝，且不泄露私有骰子。"""
     async with mcp_harness() as mcp:
         alice_conn = await mcp.open_session()
@@ -755,7 +649,7 @@ async def test_explicit_session_id_without_token_is_refused():
         bob_conn = await mcp.open_session()
         await mcp.call_tool_text(bob_conn, "liars_dice_join", {"player_name": "Bob"})
 
-        engine = engine_with_player("Bob")
+        engine = engine_with_player(mcp.manager, "Bob")
         victim_index = engine.current_turn
         victim_dice = engine.players[victim_index].dice
         victim_sid = cached_session(bob_conn, "liars_dice")
@@ -779,11 +673,11 @@ async def test_explicit_session_id_without_token_is_refused():
     for face in victim_dice:
         assert f"骰子: [{face}" not in text
     # 也没有替受害者建出新的空对局
-    assert len(game_server.manager._engines) == 1
+    assert len(mcp.manager._engines) == 1
 
 
 @pytest.mark.anyio
-async def test_explicit_session_id_with_token_still_works():
+async def test_explicit_session_id_with_token_still_works(mcp_harness):
     """带 token 的显式 session_id 正常返回私有骰子，不被新规则误伤。"""
     async with mcp_harness() as mcp:
         alice_conn = await mcp.open_session()
@@ -791,7 +685,7 @@ async def test_explicit_session_id_with_token_still_works():
         bob_conn = await mcp.open_session()
         await mcp.call_tool_text(bob_conn, "liars_dice_join", {"player_name": "Bob"})
 
-        engine = engine_with_player("Bob")
+        engine = engine_with_player(mcp.manager, "Bob")
         index = engine.current_turn
         token = engine.players[index].token
         sid = cached_session(bob_conn, "liars_dice")
@@ -808,7 +702,7 @@ async def test_explicit_session_id_with_token_still_works():
 
 
 @pytest.mark.anyio
-async def test_explicit_session_id_for_single_player_needs_no_token():
+async def test_explicit_session_id_for_single_player_needs_no_token(mcp_harness):
     """单人引擎没有 players 列表，不受 token 规则约束。"""
     async with mcp_harness() as mcp:
         session = await mcp.open_session()
@@ -829,17 +723,17 @@ async def test_explicit_session_id_for_single_player_needs_no_token():
 
 
 @pytest.mark.anyio
-async def test_stray_action_creates_no_session():
+async def test_stray_action_creates_no_session(mcp_harness):
     """没有 join 就直接 bid：报错，且不新建空大厅。"""
     async with mcp_harness() as mcp:
         session = await mcp.open_session()
-        before = len(game_server.manager._engines)
+        before = len(mcp.manager._engines)
         message = await mcp.call_tool(
             session,
             "liars_dice_bid",
             {"player_index": 0, "quantity": 2, "face": 3},
         )
-        after = len(game_server.manager._engines)
+        after = len(mcp.manager._engines)
 
     result = message["result"]
     assert result["isError"] is True
@@ -849,7 +743,7 @@ async def test_stray_action_creates_no_session():
 
 
 @pytest.mark.anyio
-async def test_stray_state_creates_no_session():
+async def test_stray_state_creates_no_session(mcp_harness):
     """state 同样不能凭空建对局。"""
     async with mcp_harness() as mcp:
         session = await mcp.open_session()
@@ -858,18 +752,18 @@ async def test_stray_state_creates_no_session():
         )
 
     assert message["result"]["isError"] is True
-    assert len(game_server.manager._engines) == 0
+    assert len(mcp.manager._engines) == 0
 
 
 @pytest.mark.anyio
-async def test_join_and_start_still_auto_create():
+async def test_join_and_start_still_auto_create(mcp_harness):
     """start/join 保留自动建局的行为。"""
     async with mcp_harness() as mcp:
         session = await mcp.open_session()
         await mcp.call_tool_text(session, "liars_dice_join", {"player_name": "Alice"})
         await mcp.call_tool_text(session, "guess_number_start", {})
 
-    assert len(game_server.manager._engines) == 2
+    assert len(mcp.manager._engines) == 2
 
 
 # ═══════════════════════════════════════════
@@ -877,9 +771,9 @@ async def test_join_and_start_still_auto_create():
 # ═══════════════════════════════════════════
 
 
-def test_parse_tool_name_resolves_registered_tools():
+def test_parse_tool_name_resolves_registered_tools(make_manager):
     """注册表驱动的解析：所有已注册工具都落到正确的 (game_type, action)。"""
-    manager = game_server.manager
+    manager = make_manager()
 
     assert _parse_tool_name(manager, "liars_dice_join") == ("liars_dice", "join")
     assert _parse_tool_name(manager, "liars_dice_challenge") == ("liars_dice", "challenge")
@@ -934,24 +828,26 @@ def test_parse_tool_name_handles_multi_word_game_types():
     assert _parse_tool_name(manager, "mega_liars_dice_state") == ("mega_liars_dice", "state")
 
 
-def test_parse_tool_name_rejects_unknown_game_type():
+def test_parse_tool_name_rejects_unknown_game_type(make_manager):
     """连游戏类型都认不出来的工具名在解析阶段就报错，不拿去建对局。"""
+    manager = make_manager()
     with pytest.raises(ValueError):
-        _parse_tool_name(game_server.manager, "nonexistent_tool")
+        _parse_tool_name(manager, "nonexistent_tool")
     with pytest.raises(ValueError):
-        _parse_tool_name(game_server.manager, "unknown_game_start")
+        _parse_tool_name(manager, "unknown_game_start")
     # 只有类型没有动作同样不算合法工具名
     with pytest.raises(ValueError):
-        _parse_tool_name(game_server.manager, "liars_dice_")
+        _parse_tool_name(manager, "liars_dice_")
 
 
-def test_parse_tool_name_falls_back_for_known_game_types():
+def test_parse_tool_name_falls_back_for_known_game_types(make_manager):
     """注册表没命中、但游戏类型确实注册过时按前缀兜底，交给引擎去拒绝动作。
 
     这是保留的旧行为：动作名是否合法由引擎的 handle_action 判定，解析层只负责
     把 game_type 认出来。
     """
-    assert _parse_tool_name(game_server.manager, "liars_dice_bogus") == (
+    manager = make_manager()
+    assert _parse_tool_name(manager, "liars_dice_bogus") == (
         "liars_dice",
         "bogus",
     )
@@ -994,9 +890,9 @@ def test_private_manager_access_is_isolated():
     assert not stray, f"manager 私有字段在这些行被直接访问: {stray}"
 
 
-def test_iter_helpers_snapshot_private_dicts():
+def test_iter_helpers_snapshot_private_dicts(make_manager):
     """两个访问替身返回快照：遍历时管理器变动不会抛错。"""
-    manager = game_server.manager
+    manager = make_manager()
     sid, _engine = manager.create("guess_number")
 
     snapshot = mcp_server._iter_engines(manager)
@@ -1011,7 +907,7 @@ def test_iter_helpers_snapshot_private_dicts():
 
 
 @pytest.mark.anyio
-async def test_unregistered_tool_returns_error_result():
+async def test_unregistered_tool_returns_error_result(mcp_harness):
     """未注册的工具名经 MCP 层返回 isError=True，而不是 500。"""
     async with mcp_harness() as mcp:
         session = await mcp.open_session()
@@ -1020,7 +916,7 @@ async def test_unregistered_tool_returns_error_result():
 
     assert message["result"]["isError"] is True
     assert bogus_action["result"]["isError"] is True
-    assert len(game_server.manager._engines) == 0
+    assert len(mcp.manager._engines) == 0
 
 
 # ═══════════════════════════════════════════
@@ -1061,10 +957,11 @@ def test_session_cache_touch_keeps_active_connection():
 
 
 @pytest.mark.anyio
-async def test_blocking_call_returns_ok_not_error():
+async def test_blocking_call_returns_ok_not_error(mcp_harness):
     """阻塞后正常返回的调用，isError 必须是 False。"""
-    if not hasattr(LiarsDiceEngine, "wait_for_change"):
-        pytest.skip("blocking wait not present")
+    assert hasattr(LiarsDiceEngine, "wait_for_change"), (
+        "LiarsDiceEngine 必须实现 wait_for_change：阻塞等待是核心能力，不是可选项"
+    )
 
     async with mcp_harness() as mcp:
         alice_conn = await mcp.open_session()
@@ -1072,7 +969,7 @@ async def test_blocking_call_returns_ok_not_error():
         bob_conn = await mcp.open_session()
         await mcp.call_tool_text(bob_conn, "liars_dice_join", {"player_name": "Bob"})
 
-        engine = engine_with_player("Bob")
+        engine = engine_with_player(mcp.manager, "Bob")
         connections = {0: alice_conn, 1: bob_conn}
         tokens = {i: engine.players[i].token for i in range(len(engine.players))}
         turn = engine.current_turn
@@ -1104,7 +1001,7 @@ async def test_blocking_call_returns_ok_not_error():
 
 
 @pytest.mark.anyio
-async def test_unexpected_error_logs_traceback(monkeypatch, caplog):
+async def test_unexpected_error_logs_traceback(monkeypatch, caplog, mcp_harness):
     """非 ValueError 的异常写完整堆栈，但调用方只看到一句短话。"""
 
     def boom(*_args, **_kwargs):
