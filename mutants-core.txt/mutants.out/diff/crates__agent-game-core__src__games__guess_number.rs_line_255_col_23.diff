@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace != with == in GuessNumberEngine::guess
+@@ -247,17 +247,17 @@
+                 "猜测值必须在 {}~{} 之间，收到 {number}",
+                 self.min, self.max
+             )));
+         }
+         Ok(number)
+     }
+ 
+     fn guess(&mut self, raw: &Value) -> Result<(), EngineError> {
+-        if self.phase != "in_progress" {
++        if self.phase == /* ~ changed by cargo-mutants ~ */ "in_progress" {
+             return Err(EngineError::invalid(format!("游戏已结束 ({})", self.phase)));
+         }
+ 
+         let number = self.validate_number(raw)?;
+         let result = match number.cmp(&self.target) {
+             std::cmp::Ordering::Less => GuessResult::TooLow,
+             std::cmp::Ordering::Greater => GuessResult::TooHigh,
+             std::cmp::Ordering::Equal => GuessResult::Correct,

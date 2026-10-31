@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace <impl GameEngine for LiarsDiceEngine>::prompts -> &PromptStore with Box::leak(Box::new(Default::default()))
+@@ -897,17 +897,17 @@
+             self.players
+                 .iter()
+                 .map(|player| player.token.clone())
+                 .collect(),
+         )
+     }
+ 
+     fn prompts(&self) -> &PromptStore {
+-        self.prompts
++        Box::leak(Box::new(Default::default())) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn setup_params(&self) -> CreateParams {
+         self.setup.clone()
+     }
+ }
+ 
+ #[cfg(test)]

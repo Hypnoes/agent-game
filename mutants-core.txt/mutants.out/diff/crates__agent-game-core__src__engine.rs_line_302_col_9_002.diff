@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/engine.rs
++++ replace GameEngine::sensitive_keys -> &'static[&'static str] with Vec::leak(vec!["xyzzy"])
+@@ -294,17 +294,17 @@
+     /// 该引擎的终态名集合。
+     fn finished_states(&self) -> &'static [&'static str] {
+         DEFAULT_FINISHED_STATES
+     }
+ 
+     /// 公开视图里**必须不存在**的敏感字段。仅供测试当作期望清单使用，
+     /// 生产路径不读它——公开视图由 [`GameEngine::public_view`] 构造。
+     fn sensitive_keys(&self) -> &'static [&'static str] {
+-        DEFAULT_SENSITIVE_KEYS
++        Vec::leak(vec!["xyzzy"]) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 当前状态名（`waiting` / `bidding` / `finished` / `won` / `lost` …）。
+     fn phase(&self) -> &'static str;
+ 
+     /// 对局是否已结束。
+     fn is_finished(&self) -> bool {
+         self.finished_states().contains(&self.phase())

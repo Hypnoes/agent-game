@@ -1,0 +1,33 @@
+--- crates/agent-game-core/src/manager.rs
++++ replace TimeoutRecord::to_json -> Value with Default::default()
+@@ -99,29 +99,17 @@
+     pub game_type: &'static str,
+     pub event: TimeoutEvent,
+ }
+ 
+ impl TimeoutRecord {
+     /// 转成事件 JSON：`{session_id, game_type, type, expired?, loser?}`。
+     #[must_use]
+     pub fn to_json(&self) -> Value {
+-        let mut object = match self.event.to_json() {
+-            Value::Object(map) => map,
+-            _ => serde_json::Map::new(),
+-        };
+-        object.insert(
+-            "session_id".to_owned(),
+-            Value::String(self.session_id.clone()),
+-        );
+-        object.insert(
+-            "game_type".to_owned(),
+-            Value::String(self.game_type.to_owned()),
+-        );
+-        Value::Object(object)
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ /// admin 列表里的一行。
+ #[derive(Clone, Debug)]
+ pub struct SessionSnapshot {
+     pub session_id: SessionId,
+     pub game_type: &'static str,

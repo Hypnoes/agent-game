@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace - with + in GuessNumberEngine::guess
+@@ -264,17 +264,17 @@
+         };
+ 
+         self.guess_count += 1;
+         self.last_result = Some(result);
+         self.last_action = Instant::now();
+         self.guesses.push(Guess {
+             number,
+             result,
+-            at_ms: (self.last_action - self.started_at).as_millis(),
++            at_ms: (self.last_action + /* ~ changed by cargo-mutants ~ */ self.started_at).as_millis(),
+         });
+ 
+         if result == GuessResult::Correct {
+             self.end("won");
+         } else if self.guess_count >= self.max_attempts {
+             self.end("lost");
+         } else {
+             // 猜一次也是状态变更：等待方（如果有）要看到新的历史

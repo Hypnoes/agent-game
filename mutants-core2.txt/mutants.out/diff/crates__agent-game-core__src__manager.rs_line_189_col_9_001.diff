@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/manager.rs
++++ replace GameManager::is_empty -> bool with false
+@@ -181,17 +181,17 @@
+     /// 当前对局数量（测试与 `/health` 用）。
+     #[must_use]
+     pub fn len(&self) -> usize {
+         self.sessions.read().map_or(0, |map| map.len())
+     }
+ 
+     #[must_use]
+     pub fn is_empty(&self) -> bool {
+-        self.len() == 0
++        false /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 所有 session 的 id（诊断用）。
+     #[must_use]
+     pub fn session_ids(&self) -> Vec<SessionId> {
+         self.sessions
+             .read()
+             .map(|map| map.keys().cloned().collect())

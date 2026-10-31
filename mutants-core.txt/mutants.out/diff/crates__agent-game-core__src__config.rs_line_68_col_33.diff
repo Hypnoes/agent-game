@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/config.rs
++++ replace < with == in Config::block_budget_display
+@@ -60,17 +60,17 @@
+     pub fn block_budget_secs(&self) -> f64 {
+         self.block_budget.as_secs_f64()
+     }
+ 
+     /// 提示词渲染用的预算数值：整数就显示整数，避免出现 "55.0 秒"。
+     #[must_use]
+     pub fn block_budget_display(&self) -> String {
+         let secs = self.block_budget_secs();
+-        if (secs.fract()).abs() < f64::EPSILON {
++        if (secs.fract()).abs() == /* ~ changed by cargo-mutants ~ */ f64::EPSILON {
+             format!("{secs:.0}")
+         } else {
+             // Rust 的 format! 没有 `:g`，这里手工去掉尾随零
+             format!("{secs:.3}")
+                 .trim_end_matches('0')
+                 .trim_end_matches('.')
+                 .to_owned()
+         }

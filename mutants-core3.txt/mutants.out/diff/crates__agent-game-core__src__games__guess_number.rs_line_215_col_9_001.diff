@@ -1,0 +1,57 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace GuessNumberEngine::validate_number -> Result<i64, EngineError> with Ok(1)
+@@ -207,53 +207,17 @@
+         self.signal.notify();
+     }
+ 
+     /// 把外部传进来的猜测值收敛成合法整数。
+     ///
+     /// `bool` 是"数字"的错觉（JSON 里它根本不是数字，REST 层已经挡住），
+     /// 但 `1.0` 这种整数形式的浮点要接受——MCP 客户端经常把整数序列化成浮点。
+     fn validate_number(&self, raw: &Value) -> Result<i64, EngineError> {
+-        let number = match raw {
+-            Value::Bool(value) => {
+-                return Err(EngineError::invalid(format!(
+-                    "猜测值必须是整数，收到 {value}"
+-                )));
+-            }
+-            Value::Number(number) => {
+-                if let Some(int) = number.as_i64() {
+-                    int
+-                } else if let Some(float) = number.as_f64() {
+-                    if float.fract().abs() > f64::EPSILON {
+-                        return Err(EngineError::invalid(format!(
+-                            "猜测值必须是整数，收到 {float}"
+-                        )));
+-                    }
+-                    float as i64
+-                } else {
+-                    return Err(EngineError::invalid(format!(
+-                        "猜测值必须是整数，收到 {number}"
+-                    )));
+-                }
+-            }
+-            other => {
+-                return Err(EngineError::invalid(format!(
+-                    "猜测值必须是 {}~{} 的整数，收到 {other}",
+-                    self.min, self.max
+-                )));
+-            }
+-        };
+-
+-        if number < self.min || number > self.max {
+-            return Err(EngineError::invalid(format!(
+-                "猜测值必须在 {}~{} 之间，收到 {number}",
+-                self.min, self.max
+-            )));
+-        }
+-        Ok(number)
++        Ok(1) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn guess(&mut self, raw: &Value) -> Result<(), EngineError> {
+         if self.phase != "in_progress" {
+             return Err(EngineError::invalid(format!("游戏已结束 ({})", self.phase)));
+         }
+ 
+         let number = self.validate_number(raw)?;

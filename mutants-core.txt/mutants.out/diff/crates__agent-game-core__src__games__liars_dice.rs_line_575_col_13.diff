@@ -1,0 +1,46 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ delete match arm "finished" in LiarsDiceEngine::build_prompt
+@@ -567,42 +567,17 @@
+     fn build_prompt(&self, player_index: Option<usize>) -> String {
+         let wait_budget = self.block_budget.as_secs_f64();
+         let turn_timeout = self.turn_timeout.as_secs_f64();
+         let waited = self.last_action.elapsed().as_secs();
+         let remaining = turn_timeout - (self.last_action.elapsed().as_secs_f64());
+         let remaining = remaining.max(0.0);
+ 
+         match self.phase {
+-            "finished" => {
+-                let winner = self
+-                    .winner
+-                    .and_then(|index| self.players.get(index))
+-                    .map_or("?", |player| player.name.as_str());
+-                self.render(
+-                    "finished",
+-                    &Ctx::new()
+-                        .with("winner", winner)
+-                        .with(
+-                            "all_dice",
+-                            self.players
+-                                .iter()
+-                                .map(|p| p.dice.clone())
+-                                .collect::<Vec<_>>(),
+-                        )
+-                        .with(
+-                            "call_history",
+-                            self.call_history
+-                                .iter()
+-                                .filter(|call| call.is_bid())
+-                                .map(|call| (call.quantity, call.face))
+-                                .collect::<Vec<_>>(),
+-                        ),
+-                )
+-            }
++             /* ~ changed by cargo-mutants ~ */
+             "waiting" => self.render(
+                 "waiting",
+                 &Ctx::new()
+                     .with("players", self.players.len())
+                     .with("needed", self.player_count)
+                     .with("waited", waited as i64)
+                     .with("wait_budget", wait_budget),
+             ),

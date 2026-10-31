@@ -1,0 +1,34 @@
+--- crates/agent-game-core/src/manager.rs
++++ replace GameManager::mark_expired -> bool with true
+@@ -406,30 +406,17 @@
+         events
+     }
+ 
+     /// 登记一个已上报的超时事件。
+     ///
+     /// 返回 `true` 表示这是第一次上报。顺带把缓存限制在有界范围内，
+     /// 避免长期运行后无限增长（FIFO 淘汰）。
+     fn mark_expired(&self, session_id: &str, kind: &'static str) -> bool {
+-        let Ok(mut seen) = self.seen_expired.lock() else {
+-            return true;
+-        };
+-        if seen
+-            .iter()
+-            .any(|(id, existing)| id == session_id && *existing == kind)
+-        {
+-            return false;
+-        }
+-        seen.push((session_id.to_owned(), kind));
+-        while seen.len() > MAX_SEEN_EXPIRED {
+-            seen.remove(0);
+-        }
+-        true
++        true /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 定位一个对局。
+     ///
+     /// # Errors
+     /// session 不存在。
+     pub fn require(&self, session_id: &str) -> Result<Arc<Session>, SessionNotFound> {
+         self.get(session_id)

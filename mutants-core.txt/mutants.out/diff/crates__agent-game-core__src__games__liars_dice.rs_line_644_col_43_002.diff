@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace < with <= in LiarsDiceEngine::build_prompt
+@@ -636,17 +636,17 @@
+                         |call| format!("{}×{}", call.quantity, call.face),
+                     );
+                     return self.render(
+                         "not_your_turn",
+                         &Ctx::new()
+                             .with("current_player", current_player)
+                             .with(
+                                 "progress",
+-                                if waited < 10 {
++                                if waited <= /* ~ changed by cargo-mutants ~ */ 10 {
+                                     "刚刚".to_owned()
+                                 } else {
+                                     format!("已思考 {waited} 秒")
+                                 },
+                             )
+                             .with("patience", patience)
+                             .with("call_str", call_str)
+                             .with("dice", self.players[index].dice.clone())

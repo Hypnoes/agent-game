@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace % with + in LiarsDiceEngine::next_alive_index
+@@ -268,17 +268,17 @@
+ 
+     /// 从 `player_index` 往后找下一位存活玩家（跳过出局者，绕一圈）。
+     fn next_alive_index(&self, player_index: usize) -> usize {
+         let count = self.players.len();
+         if count == 0 {
+             return 0;
+         }
+         for step in 1..=count {
+-            let index = (player_index + step) % count;
++            let index = (player_index + step) + /* ~ changed by cargo-mutants ~ */ count;
+             if self.players[index].alive {
+                 return index;
+             }
+         }
+         // 没有别的存活玩家了（对局应已结束），原地不动以免乱指
+         player_index
+     }
+ 

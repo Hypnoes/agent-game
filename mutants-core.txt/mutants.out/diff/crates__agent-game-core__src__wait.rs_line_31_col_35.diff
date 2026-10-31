@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/wait.rs
++++ replace + with - in wait_for
+@@ -23,17 +23,17 @@
+ /// 顺序是固定的：**先订阅、再判条件、再等剩余预算**。反过来会让"检查"与"订阅"
+ /// 之间发生的变更丢掉唤醒，白等满整个预算。
+ pub async fn wait_for<C, Fut>(signal: &ChangeSignal, budget: Duration, mut cond: C) -> WaitOutcome
+ where
+     C: FnMut() -> Fut,
+     Fut: Future<Output = bool>,
+ {
+     let mut sub = signal.subscribe();
+-    let deadline = Instant::now() + budget;
++    let deadline = Instant::now() - /* ~ changed by cargo-mutants ~ */ budget;
+ 
+     loop {
+         // 先订阅（上面已做），再判条件：这两步之间发生的 notify 已把版本号推进，
+         // 下面 `signal.wait` 一进来就会发现，不会丢。
+         if cond().await {
+             return WaitOutcome::Ready;
+         }
+ 

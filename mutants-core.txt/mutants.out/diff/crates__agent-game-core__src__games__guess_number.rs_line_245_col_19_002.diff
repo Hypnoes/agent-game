@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace < with <= in GuessNumberEngine::validate_number
+@@ -237,17 +237,17 @@
+             other => {
+                 return Err(EngineError::invalid(format!(
+                     "猜测值必须是 {}~{} 的整数，收到 {other}",
+                     self.min, self.max
+                 )));
+             }
+         };
+ 
+-        if number < self.min || number > self.max {
++        if number <= /* ~ changed by cargo-mutants ~ */ self.min || number > self.max {
+             return Err(EngineError::invalid(format!(
+                 "猜测值必须在 {}~{} 之间，收到 {number}",
+                 self.min, self.max
+             )));
+         }
+         Ok(number)
+     }
+ 

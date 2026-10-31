@@ -1,0 +1,35 @@
+--- crates/agent-game-core/src/signal.rs
++++ replace ChangeSignal::wait -> WaitOutcome with Default::default()
+@@ -94,31 +94,17 @@
+     }
+ 
+     /// 等待一次变更，最多 `budget`。
+     ///
+     /// 只等"版本号相对 `sub` 已经前进"这一个条件。收到变更返回
+     /// [`WaitOutcome::Ready`]，超时返回 [`WaitOutcome::Timeout`]。
+     /// **不判断"是不是轮到我"** —— 那是调用方循环要重复做的事。
+     pub async fn wait(&self, sub: &mut Subscription, budget: Duration) -> WaitOutcome {
+-        if budget.is_zero() {
+-            return WaitOutcome::Timeout;
+-        }
+-        // 订阅之后、进入等待之前已经发生过 notify()，这次唤醒不能丢
+-        if sub.has_changed() {
+-            return WaitOutcome::Ready;
+-        }
+-        match tokio::time::timeout(budget, sub.rx.changed()).await {
+-            // `changed()` 成功即表示版本推进过——它同时把"已读"标记推进了，
+-            // 所以这里**不能**再问 `has_changed()`（那已经是 false 了）。
+-            Ok(Ok(())) => WaitOutcome::Ready,
+-            // sender 被 drop 不可能发生（signal 与引擎同生命周期），当作没变
+-            Ok(Err(_)) => WaitOutcome::Timeout,
+-            Err(_) => WaitOutcome::Timeout,
+-        }
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 等到绝对时刻 `deadline`。等价于 `wait`，但避免调用方自己算剩余时间。
+     pub async fn wait_until(&self, sub: &mut Subscription, deadline: Instant) -> WaitOutcome {
+         let budget = deadline.saturating_duration_since(Instant::now());
+         self.wait(sub, budget).await
+     }
+ 

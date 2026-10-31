@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace > with < in LiarsDiceEngine::build_prompt
+@@ -614,17 +614,17 @@
+                     // 不是我的回合：只描述两件确定的事——对手的回合进行了多久、
+                     // 一次 state 调用最多挂起多久。视图层不知道"这一次调用等了多久"
+                     // （立即返回的 GET 与挂满预算的 state 走同一条渲染路径）。
+                     let current_player = self
+                         .players
+                         .get(self.current_turn)
+                         .map_or("?", |player| player.name.as_str());
+                     let mut patience = String::new();
+-                    if waited > 20 {
++                    if waited < /* ~ changed by cargo-mutants ~ */ 20 {
+                         patience = self.render(
+                             "patience_20",
+                             &Ctx::new().with("turn_timeout", turn_timeout),
+                         );
+                     }
+                     if waited > 40 {
+                         patience = self.render(
+                             "patience_40",

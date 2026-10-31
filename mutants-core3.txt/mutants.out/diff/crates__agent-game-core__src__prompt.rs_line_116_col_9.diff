@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/prompt.rs
++++ replace <impl From<Vec<Vec<i64>>> for Value>::from -> Self with Default::default()
+@@ -108,17 +108,17 @@
+ impl From<Vec<(i64, i64)>> for Value {
+     fn from(items: Vec<(i64, i64)>) -> Self {
+         Self::Pairs(items)
+     }
+ }
+ 
+ impl From<Vec<Vec<i64>>> for Value {
+     fn from(groups: Vec<Vec<i64>>) -> Self {
+-        Self::Groups(groups)
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ /// 把浮点渲染成"整数时不带小数点"的形式：`55.0 → "55"`，`7.5 → "7.5"`。
+ ///
+ /// Python 版用 `:g` 格式说明符做这件事；Rust 的 `format!` 没有 `g`，
+ /// 所以在渲染层显式实现同样的效果。模板里仍然写 `{name:g}`，语义保持可读。
+ fn format_g(number: f64) -> String {

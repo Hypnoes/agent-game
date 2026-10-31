@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace LiarsDiceEngine::call_history -> &[Call] with Vec::leak(vec![Default::default()])
+@@ -212,17 +212,17 @@
+ 
+     #[must_use]
+     pub fn current_call(&self) -> Option<&Call> {
+         self.current_call.as_ref()
+     }
+ 
+     #[must_use]
+     pub fn call_history(&self) -> &[Call] {
+-        &self.call_history
++        Vec::leak(vec![Default::default()]) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     #[must_use]
+     pub fn winner(&self) -> Option<usize> {
+         self.winner
+     }
+ 
+     #[must_use]

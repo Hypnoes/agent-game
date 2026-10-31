@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/manager.rs
++++ replace != with == in GameManager::create
+@@ -258,17 +258,17 @@
+ 
+         // 2. 多人游戏：加入等待中的、参数兼容的桌子
+         let multi = self
+             .registry
+             .get(game_type)
+             .is_some_and(|meta| meta.player_mode.is_multi());
+         if multi {
+             for session in &existing {
+-                if session.game_type != game_type {
++                if session.game_type == /* ~ changed by cargo-mutants ~ */ game_type {
+                     continue;
+                 }
+                 let engine = session.engine.lock().await;
+                 let waiting = engine.phase() == "waiting" && !engine.is_finished();
+                 drop(engine);
+                 if waiting && compatible(&session.setup, &setup) {
+                     return Ok(Arc::clone(session));
+                 }

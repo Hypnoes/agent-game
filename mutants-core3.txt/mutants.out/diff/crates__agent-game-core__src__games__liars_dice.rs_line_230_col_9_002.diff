@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace LiarsDiceEngine::loser -> Option<usize> with Some(1)
+@@ -222,17 +222,17 @@
+ 
+     #[must_use]
+     pub fn winner(&self) -> Option<usize> {
+         self.winner
+     }
+ 
+     #[must_use]
+     pub fn loser(&self) -> Option<usize> {
+-        self.loser
++        Some(1) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     #[must_use]
+     pub fn turn_timeout(&self) -> Duration {
+         self.turn_timeout
+     }
+ 
+     /// 场上仍在使用的骰子总数。

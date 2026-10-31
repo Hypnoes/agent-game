@@ -1,0 +1,25 @@
+--- crates/agent-game-core/src/config.rs
++++ replace secs_f64 -> Duration with Default::default()
+@@ -77,21 +77,17 @@
+     }
+ }
+ 
+ /// 把秒数转成 `Duration`。
+ ///
+ /// 负数与 NaN 会被夹成 0 并保留成"立即返回"的语义，而不是 panic：
+ /// 这个函数只用于内部常量，但一个写错的常量不该让进程起不来。
+ fn secs_f64(secs: f64) -> Duration {
+-    if secs.is_finite() && secs > 0.0 {
+-        Duration::from_secs_f64(secs)
+-    } else {
+-        Duration::ZERO
+-    }
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+ 
+     #[test]
+     fn defaults_match_the_documented_values() {

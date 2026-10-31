@@ -1,0 +1,142 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace LiarsDiceEngine::build_prompt -> String with String::new()
+@@ -560,138 +560,17 @@
+                 "quantity": call.quantity,
+                 "face": call.face,
+                 "message": call.message,
+             })).collect::<Vec<_>>(),
+         })
+     }
+ 
+     fn build_prompt(&self, player_index: Option<usize>) -> String {
+-        let wait_budget = self.block_budget.as_secs_f64();
+-        let turn_timeout = self.turn_timeout.as_secs_f64();
+-        let waited = self.last_action.elapsed().as_secs();
+-        let remaining = turn_timeout - (self.last_action.elapsed().as_secs_f64());
+-        let remaining = remaining.max(0.0);
+-
+-        match self.phase {
+-            "finished" => {
+-                let winner = self
+-                    .winner
+-                    .and_then(|index| self.players.get(index))
+-                    .map_or("?", |player| player.name.as_str());
+-                self.render(
+-                    "finished",
+-                    &Ctx::new()
+-                        .with("winner", winner)
+-                        .with(
+-                            "all_dice",
+-                            self.players
+-                                .iter()
+-                                .map(|p| p.dice.clone())
+-                                .collect::<Vec<_>>(),
+-                        )
+-                        .with(
+-                            "call_history",
+-                            self.call_history
+-                                .iter()
+-                                .filter(|call| call.is_bid())
+-                                .map(|call| (call.quantity, call.face))
+-                                .collect::<Vec<_>>(),
+-                        ),
+-                )
+-            }
+-            "waiting" => self.render(
+-                "waiting",
+-                &Ctx::new()
+-                    .with("players", self.players.len())
+-                    .with("needed", self.player_count)
+-                    .with("waited", waited as i64)
+-                    .with("wait_budget", wait_budget),
+-            ),
+-            _ => {
+-                let Some(index) = player_index.filter(|index| *index < self.players.len()) else {
+-                    return String::new();
+-                };
+-                if self.current_turn != index {
+-                    // 不是我的回合：只描述两件确定的事——对手的回合进行了多久、
+-                    // 一次 state 调用最多挂起多久。视图层不知道"这一次调用等了多久"
+-                    // （立即返回的 GET 与挂满预算的 state 走同一条渲染路径）。
+-                    let current_player = self
+-                        .players
+-                        .get(self.current_turn)
+-                        .map_or("?", |player| player.name.as_str());
+-                    let mut patience = String::new();
+-                    if waited > 20 {
+-                        patience = self.render(
+-                            "patience_20",
+-                            &Ctx::new().with("turn_timeout", turn_timeout),
+-                        );
+-                    }
+-                    if waited > 40 {
+-                        patience = self.render(
+-                            "patience_40",
+-                            &Ctx::new().with("remaining_time", remaining as i64),
+-                        );
+-                    }
+-                    let call_str = self.current_call.as_ref().map_or_else(
+-                        || "无".to_owned(),
+-                        |call| format!("{}×{}", call.quantity, call.face),
+-                    );
+-                    return self.render(
+-                        "not_your_turn",
+-                        &Ctx::new()
+-                            .with("current_player", current_player)
+-                            .with(
+-                                "progress",
+-                                if waited < 10 {
+-                                    "刚刚".to_owned()
+-                                } else {
+-                                    format!("已思考 {waited} 秒")
+-                                },
+-                            )
+-                            .with("patience", patience)
+-                            .with("call_str", call_str)
+-                            .with("dice", self.players[index].dice.clone())
+-                            .with("player_index", index)
+-                            .with("elapsed", waited as i64)
+-                            .with("wait_budget", wait_budget),
+-                    );
+-                }
+-
+-                let call_str = self.current_call.as_ref().map_or_else(
+-                    || "无（你是第一个叫数的人）".to_owned(),
+-                    |call| {
+-                        format!(
+-                            "{}×{}（{} 叫的）",
+-                            call.quantity,
+-                            call.face,
+-                            self.players
+-                                .get(call.player_idx)
+-                                .map_or("?", |player| player.name.as_str())
+-                        )
+-                    },
+-                );
+-                let msg_line = self
+-                    .current_call
+-                    .as_ref()
+-                    .filter(|call| !call.message.is_empty())
+-                    .map_or_else(String::new, |call| {
+-                        format!("\n💬 上家说: '{}'", call.message)
+-                    });
+-                self.render(
+-                    "your_turn",
+-                    &Ctx::new()
+-                        .with("dice", self.players[index].dice.clone())
+-                        .with("call_str", call_str)
+-                        .with("msg_line", msg_line)
+-                        .with("remaining", remaining as i64)
+-                        .with("player_index", index),
+-                )
+-            }
+-        }
++        String::new() /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ impl GameEngine for LiarsDiceEngine {
+     fn game_type(&self) -> &'static str {
+         self.game_type
+     }
+ 

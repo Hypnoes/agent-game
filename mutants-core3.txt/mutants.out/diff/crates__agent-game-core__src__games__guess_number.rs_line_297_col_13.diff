@@ -1,0 +1,30 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ delete match arm "lost" in GuessNumberEngine::build_prompt
+@@ -289,26 +289,17 @@
+                 let last = self.guesses.last().map_or(0, |guess| guess.number);
+                 self.render(
+                     "won",
+                     &Ctx::new()
+                         .with("last_guess", last)
+                         .with("count", self.guess_count),
+                 )
+             }
+-            "lost" => {
+-                let history: Vec<i64> = self.guesses.iter().map(|guess| guess.number).collect();
+-                self.render(
+-                    "lost",
+-                    &Ctx::new()
+-                        .with("max_attempts", self.max_attempts)
+-                        .with("target", self.target)
+-                        .with("history", history),
+-                )
+-            }
++             /* ~ changed by cargo-mutants ~ */
+             _ => match self.guesses.last() {
+                 Some(last) => {
+                     let history: Vec<i64> = self.guesses.iter().map(|g| g.number).collect();
+                     self.render(
+                         "in_progress",
+                         &Ctx::new()
+                             .with("count", self.guess_count)
+                             .with("last_number", last.number)

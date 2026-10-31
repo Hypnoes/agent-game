@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/prompt.rs
++++ replace == with != in parse
+@@ -148,17 +148,17 @@
+ fn parse(template: &str) -> Result<Vec<Segment>, String> {
+     let mut segments = Vec::new();
+     let mut literal = String::new();
+     let mut chars = template.chars().peekable();
+ 
+     while let Some(ch) = chars.next() {
+         match ch {
+             '{' => {
+-                if chars.peek() == Some(&'{') {
++                if chars.peek() != /* ~ changed by cargo-mutants ~ */ Some(&'{') {
+                     chars.next();
+                     literal.push('{');
+                     continue;
+                 }
+                 let mut field = String::new();
+                 let mut closed = false;
+                 for inner in chars.by_ref() {
+                     if inner == '}' {

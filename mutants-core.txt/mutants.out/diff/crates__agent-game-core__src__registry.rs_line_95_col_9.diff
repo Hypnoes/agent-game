@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/registry.rs
++++ replace Registry::iter -> impl Iterator<Item =(&'static str, &GameMeta)> with ::std::iter::empty()
+@@ -87,17 +87,17 @@
+     }
+ 
+     #[must_use]
+     pub fn contains(&self, game_type: &str) -> bool {
+         self.games.contains_key(game_type)
+     }
+ 
+     pub fn iter(&self) -> impl Iterator<Item = (&'static str, &GameMeta)> {
+-        self.games.iter().map(|(key, meta)| (*key, meta))
++        ::std::iter::empty() /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     #[must_use]
+     pub fn len(&self) -> usize {
+         self.games.len()
+     }
+ 
+     #[must_use]

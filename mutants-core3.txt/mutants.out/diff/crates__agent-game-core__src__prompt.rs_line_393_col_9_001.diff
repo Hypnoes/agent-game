@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/prompt.rs
++++ replace Ctx::get -> Option<&Value> with Some(Box::leak(Box::new(Default::default())))
+@@ -385,17 +385,17 @@
+     }
+ 
+     pub fn insert(&mut self, name: &str, value: impl Into<Value>) {
+         self.fields.insert(name.to_owned(), value.into());
+     }
+ 
+     #[must_use]
+     pub fn get(&self, name: &str) -> Option<&Value> {
+-        self.fields.get(name)
++        Some(Box::leak(Box::new(Default::default()))) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     #[must_use]
+     pub fn len(&self) -> usize {
+         self.fields.len()
+     }
+ 
+     #[must_use]

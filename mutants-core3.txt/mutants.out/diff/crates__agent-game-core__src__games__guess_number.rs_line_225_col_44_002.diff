@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace > with >= in GuessNumberEngine::validate_number
+@@ -217,17 +217,17 @@
+                 return Err(EngineError::invalid(format!(
+                     "猜测值必须是整数，收到 {value}"
+                 )));
+             }
+             Value::Number(number) => {
+                 if let Some(int) = number.as_i64() {
+                     int
+                 } else if let Some(float) = number.as_f64() {
+-                    if float.fract().abs() > f64::EPSILON {
++                    if float.fract().abs() >= /* ~ changed by cargo-mutants ~ */ f64::EPSILON {
+                         return Err(EngineError::invalid(format!(
+                             "猜测值必须是整数，收到 {float}"
+                         )));
+                     }
+                     float as i64
+                 } else {
+                     return Err(EngineError::invalid(format!(
+                         "猜测值必须是整数，收到 {number}"

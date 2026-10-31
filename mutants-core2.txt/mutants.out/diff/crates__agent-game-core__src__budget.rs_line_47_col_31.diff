@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/budget.rs
++++ replace > with == in sanitize_cap
+@@ -39,17 +39,17 @@
+         None | Some(Value::Null) => default.unwrap_or(cap),
+         Some(value) => to_finite(value)?,
+     };
+     Ok(budget.clamp(0.0, cap))
+ }
+ 
+ /// 上限本身若是负数或 NaN（配置写错了），按 0 处理，避免 `clamp` panic。
+ fn sanitize_cap(cap: f64) -> f64 {
+-    if cap.is_finite() && cap > 0.0 {
++    if cap.is_finite() && cap == /* ~ changed by cargo-mutants ~ */ 0.0 {
+         cap
+     } else {
+         0.0
+     }
+ }
+ 
+ fn to_finite(value: &Value) -> Result<f64, BudgetError> {
+     // `as_f64` 对 bool / 字符串 / 数组 / 对象都返回 None：Python 里 bool 是 int

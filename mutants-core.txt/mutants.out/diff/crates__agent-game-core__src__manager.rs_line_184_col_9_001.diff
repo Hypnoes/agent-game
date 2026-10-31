@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/manager.rs
++++ replace GameManager::len -> usize with 1
+@@ -176,17 +176,17 @@
+     #[must_use]
+     pub fn registry(&self) -> &Registry {
+         &self.registry
+     }
+ 
+     /// 当前对局数量（测试与 `/health` 用）。
+     #[must_use]
+     pub fn len(&self) -> usize {
+-        self.sessions.read().map_or(0, |map| map.len())
++        1 /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     #[must_use]
+     pub fn is_empty(&self) -> bool {
+         self.len() == 0
+     }
+ 
+     /// 所有 session 的 id（诊断用）。

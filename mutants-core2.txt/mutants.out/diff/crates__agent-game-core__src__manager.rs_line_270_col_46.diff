@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/manager.rs
++++ replace == with != in GameManager::create
+@@ -262,17 +262,17 @@
+             .get(game_type)
+             .is_some_and(|meta| meta.player_mode.is_multi());
+         if multi {
+             for session in &existing {
+                 if session.game_type != game_type {
+                     continue;
+                 }
+                 let engine = session.engine.lock().await;
+-                let waiting = engine.phase() == "waiting" && !engine.is_finished();
++                let waiting = engine.phase() != /* ~ changed by cargo-mutants ~ */ "waiting" && !engine.is_finished();
+                 drop(engine);
+                 if waiting && compatible(&session.setup, &setup) {
+                     return Ok(Arc::clone(session));
+                 }
+             }
+         }
+ 
+         // 3. 新建

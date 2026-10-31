@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace && with || in <impl GameEngine for LiarsDiceEngine>::player_view
+@@ -745,17 +745,17 @@
+ 
+     fn player_view(&self, player_index: Option<usize>) -> Result<PlayerView, EngineError> {
+         let index = self.validate_index(player_index)?;
+         let mut private = serde_json::json!({
+             "your_dice": self.players[index].dice.clone(),
+             "your_index": index,
+         });
+         if self.phase == "finished"
+-            && let Value::Object(ref mut map) = private
++            || /* ~ changed by cargo-mutants ~ */ let Value::Object(ref mut map) = private
+         {
+             {
+                 map.insert(
+                     "all_dice".to_owned(),
+                     Value::Array(
+                         self.players
+                             .iter()
+                             .map(|player| {

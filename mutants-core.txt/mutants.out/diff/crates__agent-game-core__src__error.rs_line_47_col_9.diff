@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/error.rs
++++ replace EngineError::invalid -> Self with Default::default()
+@@ -39,17 +39,17 @@
+     /// 是否是调用方问题。`Internal` 之外都是。
+     #[must_use]
+     pub fn is_client_error(&self) -> bool {
+         !matches!(self, Self::Internal(_))
+     }
+ 
+     /// 构造函数：非法输入。省得到处写 `EngineError::InvalidInput(format!(...))`。
+     pub fn invalid(message: impl Into<String>) -> Self {
+-        Self::InvalidInput(message.into())
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ /// 会话定位失败。单独一个类型而不是 `EngineError` 的分支：它在 REST 上是 404、
+ /// 在 MCP 上是"会话不存在"的提示，两种语义都不该和"参数不合法"混在一起。
+ #[derive(Debug, Error, PartialEq, Eq)]
+ #[error("会话不存在: {0}")]
+ pub struct SessionNotFound(pub String);

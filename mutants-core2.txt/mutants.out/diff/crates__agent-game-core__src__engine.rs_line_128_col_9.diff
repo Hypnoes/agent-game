@@ -1,0 +1,29 @@
+--- crates/agent-game-core/src/engine.rs
++++ replace ActionParams::require_i64 -> Result<i64, EngineError> with Ok(0)
+@@ -120,25 +120,17 @@
+         self.raw.get(key)
+     }
+ 
+     /// 取必填整数。
+     ///
+     /// # Errors
+     /// 缺失、或不是整数。
+     pub fn require_i64(&self, key: &str) -> Result<i64, EngineError> {
+-        match self.raw.get(key) {
+-            None => Err(EngineError::invalid(format!("缺少必填参数: {key}"))),
+-            Some(Value::Number(number)) => number
+-                .as_i64()
+-                .ok_or_else(|| EngineError::invalid(format!("{key} 必须是整数，收到 {number}"))),
+-            Some(other) => Err(EngineError::invalid(format!(
+-                "{key} 必须是整数，收到 {other}"
+-            ))),
+-        }
++        Ok(0) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 取可选整数。
+     ///
+     /// # Errors
+     /// 存在但不是整数。
+     pub fn optional_i64(&self, key: &str) -> Result<Option<i64>, EngineError> {
+         match self.raw.get(key) {

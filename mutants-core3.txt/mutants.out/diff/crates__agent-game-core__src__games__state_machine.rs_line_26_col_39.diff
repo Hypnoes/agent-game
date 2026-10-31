@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/state_machine.rs
++++ replace == with != in Transitions::allowed_from
+@@ -18,17 +18,17 @@
+     pub fn new(edges: Vec<(&'static str, Vec<&'static str>)>) -> Self {
+         Self { edges }
+     }
+ 
+     #[must_use]
+     pub fn allowed_from(&self, from: &str) -> Vec<&'static str> {
+         self.edges
+             .iter()
+-            .find(|(state, _)| *state == from)
++            .find(|(state, _)| *state != /* ~ changed by cargo-mutants ~ */ from)
+             .map(|(_, targets)| targets.clone())
+             .unwrap_or_default()
+     }
+ 
+     #[must_use]
+     pub fn can_transition(&self, from: &str, to: &str) -> bool {
+         self.allowed_from(from).contains(&to)
+     }

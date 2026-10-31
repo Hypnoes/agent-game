@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ delete ! in LiarsDiceEngine::validate_bid_values
+@@ -339,17 +339,17 @@
+ 
+     /// 校验叫数本身是否合法——与"必须比上家大"是两回事。
+     fn validate_bid_values(&self, quantity: i64, face: i64) -> Result<(), EngineError> {
+         if quantity < 1 {
+             return Err(EngineError::invalid(format!(
+                 "叫数数量必须是 ≥ 1 的整数，收到: {quantity}"
+             )));
+         }
+-        if !(1..=6).contains(&face) {
++        if  /* ~ changed by cargo-mutants ~ */(1..=6).contains(&face) {
+             return Err(EngineError::invalid(format!(
+                 "面值必须是 1-6 的整数，收到: {face}"
+             )));
+         }
+         let total = self.total_dice();
+         if quantity > total {
+             return Err(EngineError::invalid(format!(
+                 "叫数 {quantity} 超过场上骰子总数 {total}，这样的叫数永远开不赢"

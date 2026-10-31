@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/identity.rs
++++ replace <impl PlayerIdentity for &str>::token -> &str with "xyzzy"
+@@ -12,17 +12,17 @@
+ 
+ /// 一名玩家对外可见的最小信息：身份校验只需要 token。
+ pub trait PlayerIdentity {
+     fn token(&self) -> &str;
+ }
+ 
+ impl PlayerIdentity for &str {
+     fn token(&self) -> &str {
+-        self
++        "xyzzy" /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ impl PlayerIdentity for String {
+     fn token(&self) -> &str {
+         self
+     }
+ }

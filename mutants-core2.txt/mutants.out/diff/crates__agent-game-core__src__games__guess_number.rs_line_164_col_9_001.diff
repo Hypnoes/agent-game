@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace GuessNumberEngine::guesses -> &[Guess] with Vec::leak(vec![Default::default()])
+@@ -156,17 +156,17 @@
+ 
+     #[must_use]
+     pub fn last_result(&self) -> Option<GuessResult> {
+         self.last_result
+     }
+ 
+     #[must_use]
+     pub fn guesses(&self) -> &[Guess] {
+-        &self.guesses
++        Vec::leak(vec![Default::default()]) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 摇一个新答案。范围里还有别的数时保证换一个（不重复上一局）。
+     fn roll_target(&mut self, previous: Option<i64>) {
+         let mut rng = rand::rng();
+         match previous {
+             None if self.max <= self.min => self.target = rng.random_range(self.min..=self.max),
+             None => self.target = rng.random_range(self.min..=self.max),

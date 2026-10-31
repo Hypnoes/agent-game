@@ -1,0 +1,25 @@
+--- crates/agent-game-core/src/registry.rs
++++ replace Registry::create -> Result<BoxedEngine, String> with Ok(Default::default())
+@@ -143,21 +143,17 @@
+     /// # Errors
+     /// 未知游戏类型，或构造函数拒绝了参数。
+     pub fn create(
+         &self,
+         game_type: &str,
+         params: &CreateParams,
+         config: &Config,
+     ) -> Result<BoxedEngine, String> {
+-        let Some(meta) = self.games.get(game_type) else {
+-            let known = self.game_types();
+-            return Err(format!("未知游戏类型: {game_type}。已注册: {known:?}"));
+-        };
+-        (meta.factory)(params, config)
++        Ok(Default::default()) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 每个游戏的展示名清单（admin 列表与工具定义用）。
+     #[must_use]
+     pub fn display_names(&self) -> BTreeMap<&'static str, &'static str> {
+         self.games
+             .iter()
+             .map(|(key, meta)| (*key, meta.display_name))

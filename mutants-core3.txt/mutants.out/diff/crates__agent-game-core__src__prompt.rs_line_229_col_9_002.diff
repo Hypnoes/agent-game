@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/prompt.rs
++++ replace Templates::names -> impl Iterator<Item =&str> with ::std::iter::once("xyzzy")
+@@ -221,17 +221,17 @@
+ 
+     #[must_use]
+     pub fn get(&self, name: &str) -> Option<&str> {
+         self.inner.get(name).map(String::as_str)
+     }
+ 
+     /// 模板名字迭代器。返回的类型本身已标 `#[must_use]`，这里不再重复标注。
+     pub fn names(&self) -> impl Iterator<Item = &str> {
+-        self.inner.keys().map(String::as_str)
++        ::std::iter::once("xyzzy") /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     #[must_use]
+     pub fn len(&self) -> usize {
+         self.inner.len()
+     }
+ 
+     #[must_use]

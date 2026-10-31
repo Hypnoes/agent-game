@@ -1,0 +1,27 @@
+[package]
+name = "agent-game-server-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "agent-game 的 MCP over Streamable HTTP 适配层"
+
+[dependencies]
+agent-game-server-core.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+rmcp = { workspace = true, features = [
+    "server",
+    "transport-streamable-http-server",
+    "transport-streamable-http-server-session",
+] }
+http.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
+
+[lints]
+workspace = true

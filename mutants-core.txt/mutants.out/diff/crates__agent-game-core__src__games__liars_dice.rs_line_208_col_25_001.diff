@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace < with > in LiarsDiceEngine::set_current_turn
+@@ -200,17 +200,17 @@
+     }
+ 
+     /// 直接指定当前回合的玩家。
+     ///
+     /// 同样只给测试用：胜负判定与百搭计数需要"让指定的人行动"，
+     /// 而先手是随机决定的。
+     #[doc(hidden)]
+     pub fn set_current_turn(&mut self, player_index: usize) {
+-        if player_index < self.players.len() {
++        if player_index > /* ~ changed by cargo-mutants ~ */ self.players.len() {
+             self.current_turn = player_index;
+         }
+     }
+ 
+     #[must_use]
+     pub fn current_call(&self) -> Option<&Call> {
+         self.current_call.as_ref()
+     }

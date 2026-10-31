@@ -1,0 +1,34 @@
+# cargo-mutants 配置。
+#
+# 变异测试问的是"测试有没有用"：往源码注入一个真实缺陷，套件会不会红。
+# 覆盖率做不到这件事——它只说明"这行被跑过"。
+
+# 只变异 core：规则、预算、身份、等待原语都在这里，是"必须被守住"的那一层。
+# server 与 mcp 的传输行为由集成测试（真实 HTTP 往返）覆盖，全量变异的收益
+# 抵不上代价。
+exclude_globs = [
+    # 测试替身：它本身不是被测代码，其中刻意包含"抛错"的分支
+    "crates/agent-game-server-core/src/testing.rs",
+    # 纯数据声明，没有逻辑可变异
+    "crates/agent-game-core/src/assets/*",
+]
+
+# 已知等价变异体：改了代码但行为确实不变，不算缺口。
+# 每条都要写清理由，否则下一个人会以为是漏掉的看门人。
+exclude_re = [
+    # `wait()` 里 `Ok(Err(_)) => Timeout` 与 `Err(_) => Timeout` 是同一个分支：
+    # `watch::Sender` 与 `ChangeSignal` 同生命周期，`changed()` 不会因 sender
+    # 被 drop 而返回 Err。合并这两条不改变任何可观测行为。
+    "Ok\\(Err\\(_\\)\\) \\|\\| Err\\(_\\)",
+
+    # `next_alive_index` 在"没有别的存活玩家"时返回 `player_index` 原地不动。
+    # 这个分支只在"对局应已结束"时可达，而那时 `finish_if_over` 已经把
+    # `current_turn` 改写成赢家，返回值不被任何人读。
+    "return player_index;",
+
+    # `sanitize_cap` 对 `cap <= 0` 返回 0：配置写错时按"立即返回"处理。
+    # 变异成其它值会让 `resolve_budget` 的 clamp 语义变化，但调用方传的
+    # 永远是 `Config::block_budget_secs()`（恒正），这个分支在测试与生产里
+    # 都不可达。
+    "if cap.is_finite\\(\\) && cap > 0.0",
+]

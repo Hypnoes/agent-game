@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/manager.rs
++++ replace Session::is_poisoned -> bool with true
+@@ -68,17 +68,17 @@
+             finished_at: Mutex::new(None),
+             poisoned: AtomicBool::new(false),
+         }
+     }
+ 
+     /// 引擎是否已经 panic 过。毒化后的对局不再接受动作。
+     #[must_use]
+     pub fn is_poisoned(&self) -> bool {
+-        self.poisoned.load(Ordering::SeqCst)
++        true /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 标记引擎已毒化。
+     pub fn poison(&self) {
+         self.poisoned.store(true, Ordering::SeqCst);
+     }
+ 
+     fn finished_at(&self) -> Option<Instant> {

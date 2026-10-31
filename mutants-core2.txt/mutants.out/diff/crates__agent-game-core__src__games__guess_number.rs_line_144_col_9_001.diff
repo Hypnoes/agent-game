@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace GuessNumberEngine::max_attempts -> i64 with 1
+@@ -136,17 +136,17 @@
+ 
+     #[must_use]
+     pub fn max(&self) -> i64 {
+         self.max
+     }
+ 
+     #[must_use]
+     pub fn max_attempts(&self) -> i64 {
+-        self.max_attempts
++        1 /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     #[must_use]
+     pub fn target(&self) -> i64 {
+         self.target
+     }
+ 
+     #[must_use]

@@ -1,0 +1,19 @@
+--- crates/agent-game-core/src/testing.rs
++++ replace <impl GameEngine for DummyEngine>::prompts -> &PromptStore with Box::leak(Box::new(Default::default()))
+@@ -134,15 +134,15 @@
+         Ok(None)
+     }
+ 
+     fn signal(&self) -> Arc<ChangeSignal> {
+         Arc::clone(&self.signal)
+     }
+ 
+     fn prompts(&self) -> &PromptStore {
+-        shared_prompts()
++        Box::leak(Box::new(Default::default())) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn setup_params(&self) -> CreateParams {
+         CreateParams::default()
+     }
+ }

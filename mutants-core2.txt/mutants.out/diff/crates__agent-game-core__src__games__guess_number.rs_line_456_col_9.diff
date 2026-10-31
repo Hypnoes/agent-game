@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace <impl GameEngine for GuessNumberEngine>::setup_params -> CreateParams with Default::default()
+@@ -448,17 +448,17 @@
+         Arc::clone(&self.signal)
+     }
+ 
+     fn prompts(&self) -> &PromptStore {
+         self.prompts
+     }
+ 
+     fn setup_params(&self) -> CreateParams {
+-        self.setup.clone()
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ /// 默认终态集合（供测试断言"引擎声明的不是框架默认值"用）。
+ pub fn default_finished_states() -> &'static [&'static str] {
+     DEFAULT_FINISHED_STATES
+ }
+ 

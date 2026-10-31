@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/registry.rs
++++ replace > with >= in Registry::split_tool_name
+@@ -124,17 +124,17 @@
+                 continue;
+             }
+             if tool_name.as_bytes().get(game_type.len()) != Some(&b'_') {
+                 continue;
+             }
+             let action = &tool_name[prefix_len..];
+             let better = match best {
+                 None => true,
+-                Some((current, _)) => game_type.len() > current.len(),
++                Some((current, _)) => game_type.len() >= /* ~ changed by cargo-mutants ~ */ current.len(),
+             };
+             if better {
+                 best = Some((game_type, action));
+             }
+         }
+         best
+     }
+ 

@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ delete ! in <impl GameEngine for LiarsDiceEngine>::check_timeout
+@@ -859,17 +859,17 @@
+             // 超时与开盅同样是"输掉本轮"：本轮叫数必须清零。留着上一手的叫数，
+             // 下家既不能加码（可能已超过场上骰子总数）也不能弃权，只能替别人开盅。
+             if self.current_call.is_some() {
+                 self.call_history
+                     .push(Call::note(loser, "超时判负（本轮作废）".to_owned()));
+             }
+             self.current_call = None;
+ 
+-            if !self.eliminate(loser) {
++            if  /* ~ changed by cargo-mutants ~ */self.eliminate(loser) {
+                 self.current_turn = self.next_alive_index(loser);
+             }
+             // 判负同样要唤醒等待者，否则等待方要等满整个预算才知道对局已结束
+             self.signal.notify();
+             return Ok(Some(TimeoutEvent::turn_timeout(loser)));
+         }
+         Ok(None)
+     }

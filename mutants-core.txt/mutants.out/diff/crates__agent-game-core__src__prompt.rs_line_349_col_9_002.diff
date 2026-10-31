@@ -1,0 +1,24 @@
+--- crates/agent-game-core/src/prompt.rs
++++ replace PromptStore::names -> Vec<String> with vec!["xyzzy".into()]
+@@ -341,20 +341,17 @@
+             .read()
+             .map(|guard| Templates::from_pairs(guard.inner.clone()))
+             .unwrap_or_default()
+     }
+ 
+     /// 已加载的模板名。
+     #[must_use]
+     pub fn names(&self) -> Vec<String> {
+-        self.templates
+-            .read()
+-            .map(|guard| guard.names().map(ToOwned::to_owned).collect())
+-            .unwrap_or_default()
++        vec!["xyzzy".into()] /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 渲染。永远返回文本，见模块文档的降级梯度。
+     #[must_use]
+     pub fn render(&self, name: &str, ctx: &Ctx) -> String {
+         let guard = match self.templates.read() {
+             Ok(guard) => guard,
+             Err(poisoned) => poisoned.into_inner(),

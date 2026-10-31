@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace <= with > in LiarsDiceEngine::eliminate
+@@ -496,17 +496,17 @@
+     }
+ 
+     /// 让 `player_index` 输掉本轮：掉一颗骰子，掉光则出局。
+     ///
+     /// 场上只剩 2 名存活玩家时是突然死亡：本轮输家直接出局。
+     /// 返回对局是否因此结束。
+     fn eliminate(&mut self, player_index: usize) -> bool {
+         // 先算存活人数：下面要可变借用 `players`，同一个表达式里不能再读 self
+-        let sudden_death = self.alive_indices().len() <= 2;
++        let sudden_death = self.alive_indices().len() > /* ~ changed by cargo-mutants ~ */ 2;
+         if let Some(player) = self.players.get_mut(player_index)
+             && player.alive
+         {
+             if sudden_death {
+                 player.dice.clear();
+             } else {
+                 player.dice.pop();
+             }

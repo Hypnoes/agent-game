@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace - with + in GuessNumberEngine::build_prompt
+@@ -308,17 +308,17 @@
+                 Some(last) => {
+                     let history: Vec<i64> = self.guesses.iter().map(|g| g.number).collect();
+                     self.render(
+                         "in_progress",
+                         &Ctx::new()
+                             .with("count", self.guess_count)
+                             .with("last_number", last.number)
+                             .with("hint", last.result.hint())
+-                            .with("remaining", self.max_attempts - self.guess_count)
++                            .with("remaining", self.max_attempts + /* ~ changed by cargo-mutants ~ */ self.guess_count)
+                             .with("min_num", self.min)
+                             .with("max_num", self.max)
+                             .with("history", history),
+                     )
+                 }
+                 None => self.render(
+                     "in_progress_first",
+                     &Ctx::new()

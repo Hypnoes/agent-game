@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/identity.rs
++++ replace != with == in check_player_identity
+@@ -54,17 +54,17 @@
+     }
+ 
+     let Some(token) = player_token else {
+         return Err(EngineError::MissingToken);
+     };
+     if token.is_empty() {
+         return Err(EngineError::MissingToken);
+     }
+-    if players[index].token() != token {
++    if players[index].token() == /* ~ changed by cargo-mutants ~ */ token {
+         return Err(EngineError::TokenMismatch);
+     }
+     Ok(())
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;

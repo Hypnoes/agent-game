@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/testing.rs
++++ replace <impl GameEngine for DummyEngine>::signal -> Arc<ChangeSignal> with Arc::new(Default::default())
+@@ -130,17 +130,17 @@
+             self.phase = "finished";
+             self.signal.notify();
+             return Ok(Some(TimeoutEvent::turn_timeout(0)));
+         }
+         Ok(None)
+     }
+ 
+     fn signal(&self) -> Arc<ChangeSignal> {
+-        Arc::clone(&self.signal)
++        Arc::new(Default::default()) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn prompts(&self) -> &PromptStore {
+         shared_prompts()
+     }
+ 
+     fn setup_params(&self) -> CreateParams {
+         CreateParams::default()

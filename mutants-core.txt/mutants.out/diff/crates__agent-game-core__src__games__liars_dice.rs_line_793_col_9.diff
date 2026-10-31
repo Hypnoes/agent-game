@@ -1,0 +1,66 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace <impl GameEngine for LiarsDiceEngine>::handle_action -> Result<PlayerView, EngineError> with Ok(Default::default())
+@@ -785,62 +785,17 @@
+         })
+     }
+ 
+     fn handle_action(
+         &mut self,
+         action: &str,
+         params: ActionParams,
+     ) -> Result<PlayerView, EngineError> {
+-        match action {
+-            "join" => {
+-                let name = params.require_str("player_name")?.to_owned();
+-                let token = params.player_token()?;
+-                let index = self.add_player(name, token)?;
+-                let mut view = self.player_view(Some(index))?;
+-                // join 的响应要带上身份元数据：客户端靠它记住 token
+-                if let Value::Object(ref mut map) = view.private {
+-                    map.insert("player_index".to_owned(), Value::from(index));
+-                    map.insert(
+-                        "player_token".to_owned(),
+-                        Value::String(self.players[index].token.clone()),
+-                    );
+-                    map.insert("phase".to_owned(), Value::String(self.phase.to_owned()));
+-                    map.insert("player_count".to_owned(), Value::from(self.players.len()));
+-                    map.insert("needed".to_owned(), Value::from(self.player_count));
+-                    map.insert(
+-                        "reconnected".to_owned(),
+-                        Value::Bool(token.is_some_and(|token| !token.is_empty())),
+-                    );
+-                }
+-                view.prompt = format!(
+-                    "🎲 你是玩家 {index}，token: {}\n{}",
+-                    self.players[index].token, view.prompt
+-                );
+-                Ok(view)
+-            }
+-            "state" => {
+-                let index = self.validate_player(params.player_index()?, params.player_token()?)?;
+-                self.player_view(Some(index))
+-            }
+-            "bid" => {
+-                let index = self.validate_player(params.player_index()?, params.player_token()?)?;
+-                let quantity = params.require_i64("quantity")?;
+-                let face = params.require_i64("face")?;
+-                let message = params.optional_str("message")?.unwrap_or("").to_owned();
+-                self.make_bid(index, quantity, face, message)?;
+-                self.player_view(Some(index))
+-            }
+-            "challenge" => {
+-                let index = self.validate_player(params.player_index()?, params.player_token()?)?;
+-                self.challenge(index)?;
+-                self.player_view(Some(index))
+-            }
+-            other => Err(EngineError::UnknownAction(other.to_owned())),
+-        }
++        Ok(Default::default()) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn check_timeout(&mut self, now: Instant) -> Result<Option<TimeoutEvent>, EngineError> {
+         // 匹配超时
+         if self.phase == "waiting"
+             && now.saturating_duration_since(self.last_action) > LOBBY_TIMEOUT
+         {
+             self.signal.notify();

@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/manager.rs
++++ delete match arm Value::Object(map) in TimeoutRecord::to_json
+@@ -100,17 +100,17 @@
+     pub event: TimeoutEvent,
+ }
+ 
+ impl TimeoutRecord {
+     /// 转成事件 JSON：`{session_id, game_type, type, expired?, loser?}`。
+     #[must_use]
+     pub fn to_json(&self) -> Value {
+         let mut object = match self.event.to_json() {
+-            Value::Object(map) => map,
++             /* ~ changed by cargo-mutants ~ */
+             _ => serde_json::Map::new(),
+         };
+         object.insert(
+             "session_id".to_owned(),
+             Value::String(self.session_id.clone()),
+         );
+         object.insert(
+             "game_type".to_owned(),

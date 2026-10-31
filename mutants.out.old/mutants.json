@@ -1,0 +1,290 @@
+[
+  {
+    "diff": "--- crates/agent-game-core/src/signal.rs\n+++ replace Subscription::has_changed -> bool with true\n@@ -37,17 +37,17 @@\n }\n \n impl Subscription {\n     /// 订阅之后、进入等待之前，版本号是否已经前进过。\n     ///\n     /// 调用方在\"检查条件\"与\"进入等待\"之间用这个判断有没有漏掉一次唤醒。\n     #[must_use]\n     pub fn has_changed(&self) -> bool {\n-        self.rx.has_changed().unwrap_or(false)\n+        true /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n impl Drop for Subscription {\n     fn drop(&mut self) {\n         self.live.fetch_sub(1, Ordering::SeqCst);\n     }\n }\n",
+    "file": "crates/agent-game-core/src/signal.rs",
+    "function": {
+      "function_name": "Subscription::has_changed",
+      "return_type": "-> bool",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 46
+        },
+        "start": {
+          "column": 5,
+          "line": 40
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/agent-game-core/src/signal.rs:45:9: replace Subscription::has_changed -> bool with true",
+    "package": "agent-game-server-core",
+    "replacement": "true",
+    "span": {
+      "end": {
+        "column": 47,
+        "line": 45
+      },
+      "start": {
+        "column": 9,
+        "line": 45
+      }
+    }
+  },
+  {
+    "diff": "--- crates/agent-game-core/src/signal.rs\n+++ replace Subscription::has_changed -> bool with false\n@@ -37,17 +37,17 @@\n }\n \n impl Subscription {\n     /// 订阅之后、进入等待之前，版本号是否已经前进过。\n     ///\n     /// 调用方在\"检查条件\"与\"进入等待\"之间用这个判断有没有漏掉一次唤醒。\n     #[must_use]\n     pub fn has_changed(&self) -> bool {\n-        self.rx.has_changed().unwrap_or(false)\n+        false /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n impl Drop for Subscription {\n     fn drop(&mut self) {\n         self.live.fetch_sub(1, Ordering::SeqCst);\n     }\n }\n",
+    "file": "crates/agent-game-core/src/signal.rs",
+    "function": {
+      "function_name": "Subscription::has_changed",
+      "return_type": "-> bool",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 46
+        },
+        "start": {
+          "column": 5,
+          "line": 40
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/agent-game-core/src/signal.rs:45:9: replace Subscription::has_changed -> bool with false",
+    "package": "agent-game-server-core",
+    "replacement": "false",
+    "span": {
+      "end": {
+        "column": 47,
+        "line": 45
+      },
+      "start": {
+        "column": 9,
+        "line": 45
+      }
+    }
+  },
+  {
+    "diff": "--- crates/agent-game-core/src/signal.rs\n+++ replace <impl Drop for Subscription>::drop with ()\n@@ -43,17 +43,17 @@\n     #[must_use]\n     pub fn has_changed(&self) -> bool {\n         self.rx.has_changed().unwrap_or(false)\n     }\n }\n \n impl Drop for Subscription {\n     fn drop(&mut self) {\n-        self.live.fetch_sub(1, Ordering::SeqCst);\n+        () /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n #[derive(Debug)]\n pub struct ChangeSignal {\n     tx: watch::Sender<u64>,\n     live: Arc<AtomicUsize>,\n }\n",
+    "file": "crates/agent-game-core/src/signal.rs",
+    "function": {
+      "function_name": "<impl Drop for Subscription>::drop",
+      "return_type": "",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 52
+        },
+        "start": {
+          "column": 5,
+          "line": 50
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/agent-game-core/src/signal.rs:51:9: replace <impl Drop for Subscription>::drop with ()",
+    "package": "agent-game-server-core",
+    "replacement": "()",
+    "span": {
+      "end": {
+        "column": 50,
+        "line": 51
+      },
+      "start": {
+        "column": 9,
+        "line": 51
+      }
+    }
+  },
+  {
+    "diff": "--- crates/agent-game-core/src/signal.rs\n+++ replace ChangeSignal::subscribe -> Subscription with Default::default()\n@@ -72,21 +72,17 @@\n             tx,\n             live: Arc::new(AtomicUsize::new(0)),\n         }\n     }\n \n     /// 订阅：拿到一个携带当前版本号、drop 时自动注销的 [`Subscription`]。\n     #[must_use]\n     pub fn subscribe(&self) -> Subscription {\n-        self.live.fetch_add(1, Ordering::SeqCst);\n-        Subscription {\n-            rx: self.tx.subscribe(),\n-            live: Arc::clone(&self.live),\n-        }\n+        Default::default() /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// 唤醒全部等待者。没有等待者时调用是安全的空操作。\n     pub fn notify(&self) {\n         // `send_modify` 只在所有 receiver 都被 drop 时才失败；那时没有等待者，\n         // 版本号也不必推进（下一个订阅者从当前版本开始，它不关心历史）。\n         // 没有等待者时它是一个安全的空操作，返回的 `()` 不需要处理。\n         self.tx\n",
+    "file": "crates/agent-game-core/src/signal.rs",
+    "function": {
+      "function_name": "ChangeSignal::subscribe",
+      "return_type": "-> Subscription",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 85
+        },
+        "start": {
+          "column": 5,
+          "line": 77
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/agent-game-core/src/signal.rs:80:9: replace ChangeSignal::subscribe -> Subscription with Default::default()",
+    "package": "agent-game-server-core",
+    "replacement": "Default::default()",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 84
+      },
+      "start": {
+        "column": 9,
+        "line": 80
+      }
+    }
+  },
+  {
+    "diff": "--- crates/agent-game-core/src/signal.rs\n+++ replace ChangeSignal::notify with ()\n@@ -84,18 +84,17 @@\n         }\n     }\n \n     /// 唤醒全部等待者。没有等待者时调用是安全的空操作。\n     pub fn notify(&self) {\n         // `send_modify` 只在所有 receiver 都被 drop 时才失败；那时没有等待者，\n         // 版本号也不必推进（下一个订阅者从当前版本开始，它不关心历史）。\n         // 没有等待者时它是一个安全的空操作，返回的 `()` 不需要处理。\n-        self.tx\n-            .send_modify(|version| *version = version.wrapping_add(1));\n+        () /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// 等待一次变更，最多 `budget`。\n     ///\n     /// 只等\"版本号相对 `sub` 已经前进\"这一个条件。收到变更返回\n     /// [`WaitOutcome::Ready`]，超时返回 [`WaitOutcome::Timeout`]。\n     /// **不判断\"是不是轮到我\"** —— 那是调用方循环要重复做的事。\n     pub async fn wait(&self, sub: &mut Subscription, budget: Duration) -> WaitOutcome {\n",
+    "file": "crates/agent-game-core/src/signal.rs",
+    "function": {
+      "function_name": "ChangeSignal::notify",
+      "return_type": "",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 94
+        },
+        "start": {
+          "column": 5,
+          "line": 87
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/agent-game-core/src/signal.rs:92:9: replace ChangeSignal::notify with ()",
+    "package": "agent-game-server-core",
+    "replacement": "()",
+    "span": {
+      "end": {
+        "column": 72,
+        "line": 93
+      },
+      "start": {
+        "column": 9,
+        "line": 92
+      }
+    }
+  },
+  {
+    "diff": "--- crates/agent-game-core/src/signal.rs\n+++ replace ChangeSignal::wait -> WaitOutcome with Default::default()\n@@ -94,31 +94,17 @@\n     }\n \n     /// 等待一次变更，最多 `budget`。\n     ///\n     /// 只等\"版本号相对 `sub` 已经前进\"这一个条件。收到变更返回\n     /// [`WaitOutcome::Ready`]，超时返回 [`WaitOutcome::Timeout`]。\n     /// **不判断\"是不是轮到我\"** —— 那是调用方循环要重复做的事。\n     pub async fn wait(&self, sub: &mut Subscription, budget: Duration) -> WaitOutcome {\n-        if budget.is_zero() {\n-            return WaitOutcome::Timeout;\n-        }\n-        // 订阅之后、进入等待之前已经发生过 notify()，这次唤醒不能丢\n-        if sub.has_changed() {\n-            return WaitOutcome::Ready;\n-        }\n-        match tokio::time::timeout(budget, sub.rx.changed()).await {\n-            // `changed()` 成功即表示版本推进过——它同时把\"已读\"标记推进了，\n-            // 所以这里**不能**再问 `has_changed()`（那已经是 false 了）。\n-            Ok(Ok(())) => WaitOutcome::Ready,\n-            // sender 被 drop 不可能发生（signal 与引擎同生命周期），当作没变\n-            Ok(Err(_)) => WaitOutcome::Timeout,\n-            Err(_) => WaitOutcome::Timeout,\n-        }\n+        Default::default() /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// 等到绝对时刻 `deadline`。等价于 `wait`，但避免调用方自己算剩余时间。\n     pub async fn wait_until(&self, sub: &mut Subscription, deadline: Instant) -> WaitOutcome {\n         let budget = deadline.saturating_duration_since(Instant::now());\n         self.wait(sub, budget).await\n     }\n \n",
+    "file": "crates/agent-game-core/src/signal.rs",
+    "function": {
+      "function_name": "ChangeSignal::wait",
+      "return_type": "-> WaitOutcome",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 117
+        },
+        "start": {
+          "column": 5,
+          "line": 96
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/agent-game-core/src/signal.rs:102:9: replace ChangeSignal::wait -> WaitOutcome with Default::default()",
+    "package": "agent-game-server-core",
+    "replacement": "Default::default()",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 116
+      },
+      "start": {
+        "column": 9,
+        "line": 102
+      }
+    }
+  },
+  {
+    "diff": "--- crates/agent-game-core/src/signal.rs\n+++ replace ChangeSignal::wait_until -> WaitOutcome with Default::default()\n@@ -113,18 +113,17 @@\n             // sender 被 drop 不可能发生（signal 与引擎同生命周期），当作没变\n             Ok(Err(_)) => WaitOutcome::Timeout,\n             Err(_) => WaitOutcome::Timeout,\n         }\n     }\n \n     /// 等到绝对时刻 `deadline`。等价于 `wait`，但避免调用方自己算剩余时间。\n     pub async fn wait_until(&self, sub: &mut Subscription, deadline: Instant) -> WaitOutcome {\n-        let budget = deadline.saturating_duration_since(Instant::now());\n-        self.wait(sub, budget).await\n+        Default::default() /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// 当前在册的等待者数量（测试与诊断用）。\n     #[must_use]\n     pub fn waiter_count(&self) -> usize {\n         self.live.load(Ordering::SeqCst)\n     }\n }\n",
+    "file": "crates/agent-game-core/src/signal.rs",
+    "function": {
+      "function_name": "ChangeSignal::wait_until",
+      "return_type": "-> WaitOutcome",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 123
+        },
+        "start": {
+          "column": 5,
+          "line": 119
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/agent-game-core/src/signal.rs:121:9: replace ChangeSignal::wait_until -> WaitOutcome with Default::default()",
+    "package": "agent-game-server-core",
+    "replacement": "Default::default()",
+    "span": {
+      "end": {
+        "column": 37,
+        "line": 122
+      },
+      "start": {
+        "column": 9,
+        "line": 121
+      }
+    }
+  },
+  {
+    "diff": "--- crates/agent-game-core/src/signal.rs\n+++ replace ChangeSignal::waiter_count -> usize with 0\n@@ -120,17 +120,17 @@\n     pub async fn wait_until(&self, sub: &mut Subscription, deadline: Instant) -> WaitOutcome {\n         let budget = deadline.saturating_duration_since(Instant::now());\n         self.wait(sub, budget).await\n     }\n \n     /// 当前在册的等待者数量（测试与诊断用）。\n     #[must_use]\n     pub fn waiter_count(&self) -> usize {\n-        self.live.load(Ordering::SeqCst)\n+        0 /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     #[tokio::test(start_paused = true)]\n",
+    "file": "crates/agent-game-core/src/signal.rs",
+    "function": {
+      "function_name": "ChangeSignal::waiter_count",
+      "return_type": "-> usize",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 129
+        },
+        "start": {
+          "column": 5,
+          "line": 125
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/agent-game-core/src/signal.rs:128:9: replace ChangeSignal::waiter_count -> usize with 0",
+    "package": "agent-game-server-core",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 41,
+        "line": 128
+      },
+      "start": {
+        "column": 9,
+        "line": 128
+      }
+    }
+  },
+  {
+    "diff": "--- crates/agent-game-core/src/signal.rs\n+++ replace ChangeSignal::waiter_count -> usize with 1\n@@ -120,17 +120,17 @@\n     pub async fn wait_until(&self, sub: &mut Subscription, deadline: Instant) -> WaitOutcome {\n         let budget = deadline.saturating_duration_since(Instant::now());\n         self.wait(sub, budget).await\n     }\n \n     /// 当前在册的等待者数量（测试与诊断用）。\n     #[must_use]\n     pub fn waiter_count(&self) -> usize {\n-        self.live.load(Ordering::SeqCst)\n+        1 /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     #[tokio::test(start_paused = true)]\n",
+    "file": "crates/agent-game-core/src/signal.rs",
+    "function": {
+      "function_name": "ChangeSignal::waiter_count",
+      "return_type": "-> usize",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 129
+        },
+        "start": {
+          "column": 5,
+          "line": 125
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/agent-game-core/src/signal.rs:128:9: replace ChangeSignal::waiter_count -> usize with 1",
+    "package": "agent-game-server-core",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 41,
+        "line": 128
+      },
+      "start": {
+        "column": 9,
+        "line": 128
+      }
+    }
+  }
+]

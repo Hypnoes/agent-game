@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/signal.rs
++++ replace <impl Drop for Subscription>::drop with ()
+@@ -43,17 +43,17 @@
+     #[must_use]
+     pub fn has_changed(&self) -> bool {
+         self.rx.has_changed().unwrap_or(false)
+     }
+ }
+ 
+ impl Drop for Subscription {
+     fn drop(&mut self) {
+-        self.live.fetch_sub(1, Ordering::SeqCst);
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ #[derive(Debug)]
+ pub struct ChangeSignal {
+     tx: watch::Sender<u64>,
+     live: Arc<AtomicUsize>,
+ }

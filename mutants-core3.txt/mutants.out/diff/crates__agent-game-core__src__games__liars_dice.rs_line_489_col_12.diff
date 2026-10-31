@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ delete ! in LiarsDiceEngine::challenge
+@@ -481,17 +481,17 @@
+         self.call_history.push(Call::note(
+             player_index,
+             format!("开！(实际 {actual} 个 {})", call.face),
+         ));
+         self.current_call = None;
+         self.loser = Some(loser);
+         self.last_action = Instant::now();
+ 
+-        if !self.eliminate(loser) {
++        if  /* ~ changed by cargo-mutants ~ */self.eliminate(loser) {
+             // 对局继续：本轮叫数清零，由输家先叫下一轮（已出局则顺延）
+             self.current_turn = self.next_turn_after(loser);
+         }
+         // 掉骰、出局、结束对局都是状态变更，唤醒可能还在等待的对手
+         self.signal.notify();
+         Ok(())
+     }
+ 

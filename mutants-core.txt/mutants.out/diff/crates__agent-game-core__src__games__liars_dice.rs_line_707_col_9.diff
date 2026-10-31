@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace <impl GameEngine for LiarsDiceEngine>::sensitive_keys -> &'static[&'static str] with Vec::leak(Vec::new())
+@@ -699,17 +699,17 @@
+         PlayerMode::Multi
+     }
+ 
+     fn finished_states(&self) -> &'static [&'static str] {
+         &["finished"]
+     }
+ 
+     fn sensitive_keys(&self) -> &'static [&'static str] {
+-        &["all_dice"]
++        Vec::leak(Vec::new()) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn phase(&self) -> &'static str {
+         self.phase
+     }
+ 
+     fn admin_view(&self) -> Value {
+         let mut view = self.build_public_view();

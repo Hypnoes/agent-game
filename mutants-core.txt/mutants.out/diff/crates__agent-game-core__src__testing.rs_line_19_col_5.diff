@@ -1,0 +1,22 @@
+--- crates/agent-game-core/src/testing.rs
++++ replace shared_prompts -> &'static PromptStore with Box::leak(Box::new(Default::default()))
+@@ -11,18 +11,17 @@
+ use serde_json::Value;
+ 
+ use crate::engine::{ActionParams, CreateParams, GameEngine, PlayerMode, PlayerView, TimeoutEvent};
+ use crate::error::EngineError;
+ use crate::prompt::PromptStore;
+ use crate::signal::ChangeSignal;
+ 
+ fn shared_prompts() -> &'static PromptStore {
+-    static PROMPTS: OnceLock<PromptStore> = OnceLock::new();
+-    PROMPTS.get_or_init(|| PromptStore::new("[templates]\ndummy = \"dummy\"\n"))
++    Box::leak(Box::new(Default::default())) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// 一个可配置的最小引擎。
+ #[derive(Debug)]
+ pub struct DummyEngine {
+     game_type: &'static str,
+     player_mode: PlayerMode,
+     phase: &'static str,

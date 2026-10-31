@@ -1,0 +1,592 @@
+{
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "summary": "Success",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 7.5786432999999995,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.6065153,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/agent-game-core/src/signal.rs:45:9: replace Subscription::has_changed -> bool with true",
+          "package": "agent-game-server-core",
+          "file": "crates/agent-game-core/src/signal.rs",
+          "function": {
+            "function_name": "Subscription::has_changed",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 40,
+                "column": 5
+              },
+              "end": {
+                "line": 46,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 45,
+              "column": 9
+            },
+            "end": {
+              "line": 45,
+              "column": 47
+            }
+          },
+          "replacement": "true",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Timeout",
+      "log_path": "log/crates__agent-game-core__src__signal.rs_line_45_col_9.log",
+      "diff_path": "diff/crates__agent-game-core__src__signal.rs_line_45_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.4604823,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 20.0233187,
+          "process_status": "Timeout",
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/agent-game-core/src/signal.rs:45:9: replace Subscription::has_changed -> bool with false",
+          "package": "agent-game-server-core",
+          "file": "crates/agent-game-core/src/signal.rs",
+          "function": {
+            "function_name": "Subscription::has_changed",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 40,
+                "column": 5
+              },
+              "end": {
+                "line": 46,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 45,
+              "column": 9
+            },
+            "end": {
+              "line": 45,
+              "column": 47
+            }
+          },
+          "replacement": "false",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/crates__agent-game-core__src__signal.rs_line_45_col_9_001.log",
+      "diff_path": "diff/crates__agent-game-core__src__signal.rs_line_45_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.4598906999999999,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.6066936,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/agent-game-core/src/signal.rs:51:9: replace <impl Drop for Subscription>::drop with ()",
+          "package": "agent-game-server-core",
+          "file": "crates/agent-game-core/src/signal.rs",
+          "function": {
+            "function_name": "<impl Drop for Subscription>::drop",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 50,
+                "column": 5
+              },
+              "end": {
+                "line": 52,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 51,
+              "column": 9
+            },
+            "end": {
+              "line": 51,
+              "column": 50
+            }
+          },
+          "replacement": "()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__agent-game-core__src__signal.rs_line_51_col_9.log",
+      "diff_path": "diff/crates__agent-game-core__src__signal.rs_line_51_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.4163698,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.3546229,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/agent-game-core/src/signal.rs:80:9: replace ChangeSignal::subscribe -> Subscription with Default::default()",
+          "package": "agent-game-server-core",
+          "file": "crates/agent-game-core/src/signal.rs",
+          "function": {
+            "function_name": "ChangeSignal::subscribe",
+            "return_type": "-> Subscription",
+            "span": {
+              "start": {
+                "line": 77,
+                "column": 5
+              },
+              "end": {
+                "line": 85,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 80,
+              "column": 9
+            },
+            "end": {
+              "line": 84,
+              "column": 10
+            }
+          },
+          "replacement": "Default::default()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/crates__agent-game-core__src__signal.rs_line_80_col_9.log",
+      "diff_path": "diff/crates__agent-game-core__src__signal.rs_line_80_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.5548082,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/agent-game-core/src/signal.rs:92:9: replace ChangeSignal::notify with ()",
+          "package": "agent-game-server-core",
+          "file": "crates/agent-game-core/src/signal.rs",
+          "function": {
+            "function_name": "ChangeSignal::notify",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 87,
+                "column": 5
+              },
+              "end": {
+                "line": 94,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 92,
+              "column": 9
+            },
+            "end": {
+              "line": 93,
+              "column": 72
+            }
+          },
+          "replacement": "()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__agent-game-core__src__signal.rs_line_92_col_9.log",
+      "diff_path": "diff/crates__agent-game-core__src__signal.rs_line_92_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.4599015,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.3545934,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/agent-game-core/src/signal.rs:102:9: replace ChangeSignal::wait -> WaitOutcome with Default::default()",
+          "package": "agent-game-server-core",
+          "file": "crates/agent-game-core/src/signal.rs",
+          "function": {
+            "function_name": "ChangeSignal::wait",
+            "return_type": "-> WaitOutcome",
+            "span": {
+              "start": {
+                "line": 96,
+                "column": 5
+              },
+              "end": {
+                "line": 117,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 102,
+              "column": 9
+            },
+            "end": {
+              "line": 116,
+              "column": 10
+            }
+          },
+          "replacement": "Default::default()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/crates__agent-game-core__src__signal.rs_line_102_col_9.log",
+      "diff_path": "diff/crates__agent-game-core__src__signal.rs_line_102_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.5549169,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/agent-game-core/src/signal.rs:121:9: replace ChangeSignal::wait_until -> WaitOutcome with Default::default()",
+          "package": "agent-game-server-core",
+          "file": "crates/agent-game-core/src/signal.rs",
+          "function": {
+            "function_name": "ChangeSignal::wait_until",
+            "return_type": "-> WaitOutcome",
+            "span": {
+              "start": {
+                "line": 119,
+                "column": 5
+              },
+              "end": {
+                "line": 123,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 121,
+              "column": 9
+            },
+            "end": {
+              "line": 122,
+              "column": 37
+            }
+          },
+          "replacement": "Default::default()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/crates__agent-game-core__src__signal.rs_line_121_col_9.log",
+      "diff_path": "diff/crates__agent-game-core__src__signal.rs_line_121_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.504632,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/agent-game-core/src/signal.rs:128:9: replace ChangeSignal::waiter_count -> usize with 0",
+          "package": "agent-game-server-core",
+          "file": "crates/agent-game-core/src/signal.rs",
+          "function": {
+            "function_name": "ChangeSignal::waiter_count",
+            "return_type": "-> usize",
+            "span": {
+              "start": {
+                "line": 125,
+                "column": 5
+              },
+              "end": {
+                "line": 129,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 128,
+              "column": 9
+            },
+            "end": {
+              "line": 128,
+              "column": 41
+            }
+          },
+          "replacement": "0",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__agent-game-core__src__signal.rs_line_128_col_9.log",
+      "diff_path": "diff/crates__agent-game-core__src__signal.rs_line_128_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.5090588,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.4050124,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/agent-game-core/src/signal.rs:128:9: replace ChangeSignal::waiter_count -> usize with 1",
+          "package": "agent-game-server-core",
+          "file": "crates/agent-game-core/src/signal.rs",
+          "function": {
+            "function_name": "ChangeSignal::waiter_count",
+            "return_type": "-> usize",
+            "span": {
+              "start": {
+                "line": 125,
+                "column": 5
+              },
+              "end": {
+                "line": 129,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 128,
+              "column": 9
+            },
+            "end": {
+              "line": 128,
+              "column": 41
+            }
+          },
+          "replacement": "1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/crates__agent-game-core__src__signal.rs_line_128_col_9_001.log",
+      "diff_path": "diff/crates__agent-game-core__src__signal.rs_line_128_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.459984,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.4042787,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--verbose",
+            "--package=agent-game-server-core@0.4.0"
+          ]
+        }
+      ]
+    }
+  ],
+  "total_mutants": 9,
+  "missed": 1,
+  "caught": 4,
+  "timeout": 1,
+  "unviable": 3,
+  "success": 0,
+  "start_time": "2026-10-31T16:15:34.5429469Z",
+  "end_time": "2026-10-31T16:16:15.7925066Z",
+  "cargo_mutants_version": "27.1.0"
+}

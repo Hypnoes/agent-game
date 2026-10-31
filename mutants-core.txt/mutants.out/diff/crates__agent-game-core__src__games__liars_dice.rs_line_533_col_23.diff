@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace != with == in LiarsDiceEngine::finish_if_over
+@@ -525,17 +525,17 @@
+         }
+ 
+         self.winner = alive.first().copied();
+         self.current_call = None;
+         // current_turn 只允许指向存活玩家，对局结束后停在赢家身上
+         if let Some(winner) = self.winner {
+             self.current_turn = winner;
+         }
+-        if self.phase != "finished" {
++        if self.phase == /* ~ changed by cargo-mutants ~ */ "finished" {
+             self.phase = "finished";
+             self.signal.notify();
+         }
+         true
+     }
+ 
+     fn build_public_view(&self) -> Value {
+         let current_call = self.current_call.as_ref().map(|call| {

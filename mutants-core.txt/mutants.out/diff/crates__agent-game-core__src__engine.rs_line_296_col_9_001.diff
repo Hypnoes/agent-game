@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/engine.rs
++++ replace GameEngine::finished_states -> &'static[&'static str] with Vec::leak(vec![""])
+@@ -288,17 +288,17 @@
+     /// 机器键。必须与注册表里的键一致，也是 MCP 工具名前缀。
+     fn game_type(&self) -> &'static str;
+ 
+     /// 单人还是多人。
+     fn player_mode(&self) -> PlayerMode;
+ 
+     /// 该引擎的终态名集合。
+     fn finished_states(&self) -> &'static [&'static str] {
+-        DEFAULT_FINISHED_STATES
++        Vec::leak(vec![""]) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 公开视图里**必须不存在**的敏感字段。仅供测试当作期望清单使用，
+     /// 生产路径不读它——公开视图由 [`GameEngine::public_view`] 构造。
+     fn sensitive_keys(&self) -> &'static [&'static str] {
+         DEFAULT_SENSITIVE_KEYS
+     }
+ 

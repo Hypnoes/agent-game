@@ -1,0 +1,22 @@
+--- crates/agent-game-core/src/manager.rs
++++ replace GameManager::is_finished -> bool with true
+@@ -283,18 +283,17 @@
+         let session = Arc::new(Session::new(new_session_id(), meta, engine, setup, now));
+         if let Ok(mut map) = self.sessions.write() {
+             map.insert(session.id.clone(), Arc::clone(&session));
+         }
+         Ok(session)
+     }
+ 
+     async fn is_finished(&self, session: &Arc<Session>) -> bool {
+-        let engine = session.engine.lock().await;
+-        engine.is_finished()
++        true /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 取 session 快照列表（Arc 的克隆），供调用方在锁外逐个处理。
+     fn session_list(&self) -> Vec<Arc<Session>> {
+         self.sessions
+             .read()
+             .map(|map| map.values().cloned().collect())
+             .unwrap_or_default()

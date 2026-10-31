@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace GuessNumberEngine::last_result -> Option<GuessResult> with Some(Default::default())
+@@ -151,17 +151,17 @@
+ 
+     #[must_use]
+     pub fn guess_count(&self) -> i64 {
+         self.guess_count
+     }
+ 
+     #[must_use]
+     pub fn last_result(&self) -> Option<GuessResult> {
+-        self.last_result
++        Some(Default::default()) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     #[must_use]
+     pub fn guesses(&self) -> &[Guess] {
+         &self.guesses
+     }
+ 
+     /// 摇一个新答案。范围里还有别的数时保证换一个（不重复上一局）。

@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace <impl GameEngine for LiarsDiceEngine>::game_type -> &'static str with "xyzzy"
+@@ -687,17 +687,17 @@
+                 )
+             }
+         }
+     }
+ }
+ 
+ impl GameEngine for LiarsDiceEngine {
+     fn game_type(&self) -> &'static str {
+-        self.game_type
++        "xyzzy" /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn player_mode(&self) -> PlayerMode {
+         PlayerMode::Multi
+     }
+ 
+     fn finished_states(&self) -> &'static [&'static str] {
+         &["finished"]

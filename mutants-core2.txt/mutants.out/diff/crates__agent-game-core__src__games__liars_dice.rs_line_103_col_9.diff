@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace Call::is_bid -> bool with true
+@@ -95,17 +95,17 @@
+             quantity: 0,
+             face: 0,
+             message,
+         }
+     }
+ 
+     #[must_use]
+     pub fn is_bid(&self) -> bool {
+-        self.quantity > 0
++        true /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ /// 大话骰引擎。每个实例管理一局游戏。
+ #[derive(Debug)]
+ pub struct LiarsDiceEngine {
+     game_type: &'static str,
+     player_count: usize,

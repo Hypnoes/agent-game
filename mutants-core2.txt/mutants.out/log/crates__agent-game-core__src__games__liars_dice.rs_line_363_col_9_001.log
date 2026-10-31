@@ -1,0 +1,497 @@
+
+*** crates/agent-game-core/src/games/liars_dice.rs:363:9: replace LiarsDiceEngine::is_valid_bid -> bool with false
+
+*** mutation diff:
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace LiarsDiceEngine::is_valid_bid -> bool with false
+@@ -355,27 +355,17 @@
+                 "叫数 {quantity} 超过场上骰子总数 {total}，这样的叫数永远开不赢"
+             )));
+         }
+         Ok(())
+     }
+ 
+     /// 新叫数是否比上一手大。
+     fn is_valid_bid(previous: Option<&Call>, new_quantity: i64, new_face: i64) -> bool {
+-        let Some(previous) = previous.filter(|call| call.is_bid()) else {
+-            return true;
+-        };
+-        if new_face == 1 && previous.face != 1 {
+-            return new_quantity >= (previous.quantity / 2 + 1);
+-        }
+-        if new_face != 1 && previous.face == 1 {
+-            return new_quantity >= previous.quantity * 2;
+-        }
+-        new_quantity > previous.quantity
+-            || (new_quantity == previous.quantity && new_face > previous.face)
++        false /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn start_game(&mut self) {
+         let mut rng = rand::rng();
+         for player in &mut self.players {
+             player.dice = if player.alive {
+                 (0..self.dice_per_player)
+                     .map(|_| rng.random_range(1..=6))
+
+
+*** C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe test --no-run --verbose --package=agent-game-server-core@0.4.0
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+       Fresh unicode-ident v1.0.27
+       Fresh rand_core v0.10.1
+       Fresh cfg-if v1.0.5
+       Fresh once_cell v1.21.4
+       Fresh windows-link v0.2.1
+       Fresh fastrand v2.5.0
+       Fresh cpufeatures v0.3.1
+       Fresh autocfg v1.5.1
+       Fresh winnow v1.0.4
+       Fresh pin-project-lite v0.2.17
+       Fresh proc-macro2 v1.0.107
+       Fresh windows-sys v0.61.2
+       Fresh chacha20 v0.10.2
+       Fresh tracing-core v0.1.36
+       Fresh toml_parser v1.1.5+spec-1.1.0
+       Fresh toml_writer v1.1.3+spec-1.1.0
+       Fresh fnv v1.0.7
+       Fresh itoa v1.0.18
+       Fresh quote v1.0.47
+       Fresh serde_core v1.0.229
+       Fresh getrandom v0.4.3
+       Fresh zerocopy v0.8.63
+       Fresh libc v0.2.191
+       Fresh zmij v1.0.23
+       Fresh quick-error v1.2.3
+       Fresh encode_unicode v1.0.0
+       Fresh bit-vec v0.10.1
+       Fresh memchr v2.8.3
+       Fresh wait-timeout v0.2.1
+       Fresh rand_xorshift v0.5.0
+       Fresh bitflags v2.13.2
+       Fresh core_detect v1.0.0
+       Fresh similar v2.7.0
+       Fresh syn v3.0.9
+       Fresh tempfile v3.27.0
+       Fresh syn v2.0.119
+       Fresh toml_datetime v1.1.2+spec-1.1.0
+       Fresh serde_spanned v1.1.2
+       Fresh rand v0.10.3
+       Fresh ppv-lite86 v0.2.21
+       Fresh bit-set v0.11.1
+       Fresh serde_json v1.0.154
+       Fresh uuid v1.26.1
+       Fresh num-traits v0.2.19
+       Fresh console v0.16.6
+       Fresh regex-syntax v0.8.11
+       Fresh unarray v0.1.4
+       Fresh serde_derive v1.0.229
+       Fresh tokio-macros v2.7.2
+       Fresh tracing-attributes v0.1.31
+       Fresh thiserror-impl v2.0.21
+       Fresh rand_chacha v0.10.0
+       Fresh rusty-fork v0.3.1
+       Fresh toml v1.1.8+spec-1.1.0
+       Fresh serde v1.0.229
+       Fresh tokio v1.54.1
+       Fresh thiserror v2.0.21
+       Fresh tracing v0.1.44
+       Fresh proptest v1.12.0
+       Fresh insta v1.49.0
+       Dirty agent-game-server-core v0.4.0 (C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\crates\agent-game-core): the file `crates\agent-game-core\src\games\liars_dice.rs` has changed (13437938216.189005800s, 4s after last build at 13437938212.773162200s)
+   Compiling agent-game-server-core v0.4.0 (C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\crates\agent-game-core)
+     Running `sccache C:\Users\liumu\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name agent_game_server_core --edition=2024 crates\agent-game-core\src\lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --warn=clippy::pedantic --deny=clippy::all --deny=clippy::unwrap_used --forbid=unsafe_code --allow=clippy::type_complexity --allow=clippy::too_many_lines --deny=clippy::todo --allow=clippy::single_match_else --warn=clippy::panic --allow=clippy::must_use_candidate --allow=clippy::module_name_repetitions --allow=clippy::missing_panics_doc --allow=clippy::missing_errors_doc --warn=missing_debug_implementations --allow=clippy::match_same_arms --allow=clippy::items_after_statements --deny=clippy::expect_used --allow=clippy::doc_markdown --allow=clippy::doc_lazy_continuation --deny=clippy::dbg_macro --allow=clippy::cast_sign_loss --allow=clippy::cast_precision_loss --allow=clippy::cast_possible_wrap --allow=clippy::cast_possible_truncation --test --check-cfg cfg(docsrs,test) --check-cfg "cfg(feature, values(\"testing\"))" -C metadata=776e665327d21c45 -C extra-filename=-86c2eaf1c9c668cd --out-dir C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps -C incremental=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\incremental -L dependency=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps --extern insta=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libinsta-6b1b60352656c701.rlib --extern proptest=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libproptest-bee24bd0b079e062.rlib --extern rand=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\librand-0f68153521f71c68.rlib --extern rand_chacha=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\librand_chacha-b13f20ee04bb551d.rlib --extern serde=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libserde-d169b3e33b52321d.rlib --extern serde_json=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libserde_json-f978a229ea1df9f1.rlib --extern thiserror=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libthiserror-dcc43303b217b604.rlib --extern tokio=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libtokio-9a61b0d2a3a1b7cb.rlib --extern toml=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libtoml-c301fe879143034c.rlib --extern tracing=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libtracing-4eb4a16136954538.rlib --extern uuid=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libuuid-5a7e7d1c50990e8d.rlib`
+     Running `sccache C:\Users\liumu\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name agent_game_server_core --edition=2024 crates\agent-game-core\src\lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 --warn=clippy::pedantic --deny=clippy::all --deny=clippy::unwrap_used --forbid=unsafe_code --allow=clippy::type_complexity --allow=clippy::too_many_lines --deny=clippy::todo --allow=clippy::single_match_else --warn=clippy::panic --allow=clippy::must_use_candidate --allow=clippy::module_name_repetitions --allow=clippy::missing_panics_doc --allow=clippy::missing_errors_doc --warn=missing_debug_implementations --allow=clippy::match_same_arms --allow=clippy::items_after_statements --deny=clippy::expect_used --allow=clippy::doc_markdown --allow=clippy::doc_lazy_continuation --deny=clippy::dbg_macro --allow=clippy::cast_sign_loss --allow=clippy::cast_precision_loss --allow=clippy::cast_possible_wrap --allow=clippy::cast_possible_truncation --check-cfg cfg(docsrs,test) --check-cfg "cfg(feature, values(\"testing\"))" -C metadata=b05eccf449e4873c -C extra-filename=-503a4522d59b9544 --out-dir C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps -C incremental=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\incremental -L dependency=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps --extern rand=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\librand-0f68153521f71c68.rmeta --extern rand_chacha=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\librand_chacha-b13f20ee04bb551d.rmeta --extern serde=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libserde-d169b3e33b52321d.rmeta --extern serde_json=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libserde_json-f978a229ea1df9f1.rmeta --extern thiserror=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libthiserror-dcc43303b217b604.rmeta --extern tokio=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libtokio-9a61b0d2a3a1b7cb.rmeta --extern toml=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libtoml-c301fe879143034c.rmeta --extern tracing=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libtracing-4eb4a16136954538.rmeta --extern uuid=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libuuid-5a7e7d1c50990e8d.rmeta`
+warning: unused variable: `previous`
+   --> crates\agent-game-core\src\games\liars_dice.rs:362:21
+    |
+362 |     fn is_valid_bid(previous: Option<&Call>, new_quantity: i64, new_face: i64) -> bool {
+    |                     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_previous`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `new_quantity`
+   --> crates\agent-game-core\src\games\liars_dice.rs:362:46
+    |
+362 |     fn is_valid_bid(previous: Option<&Call>, new_quantity: i64, new_face: i64) -> bool {
+    |                                              ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_new_quantity`
+
+warning: unused variable: `new_face`
+   --> crates\agent-game-core\src\games\liars_dice.rs:362:65
+    |
+362 |     fn is_valid_bid(previous: Option<&Call>, new_quantity: i64, new_face: i64) -> bool {
+    |                                                                 ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_new_face`
+
+warning: `agent-game-server-core` (lib) generated 3 warnings (run `cargo fix --lib -p agent-game-server-core` to apply 3 suggestions)
+     Running `sccache C:\Users\liumu\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name full_game --edition=2024 crates\agent-game-core\tests\full_game.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --warn=clippy::pedantic --deny=clippy::all --deny=clippy::unwrap_used --forbid=unsafe_code --allow=clippy::type_complexity --allow=clippy::too_many_lines --deny=clippy::todo --allow=clippy::single_match_else --warn=clippy::panic --allow=clippy::must_use_candidate --allow=clippy::module_name_repetitions --allow=clippy::missing_panics_doc --allow=clippy::missing_errors_doc --warn=missing_debug_implementations --allow=clippy::match_same_arms --allow=clippy::items_after_statements --deny=clippy::expect_used --allow=clippy::doc_markdown --allow=clippy::doc_lazy_continuation --deny=clippy::dbg_macro --allow=clippy::cast_sign_loss --allow=clippy::cast_precision_loss --allow=clippy::cast_possible_wrap --allow=clippy::cast_possible_truncation --test --check-cfg cfg(docsrs,test) --check-cfg "cfg(feature, values(\"testing\"))" -C metadata=cadb94608a1a972d -C extra-filename=-22c8b63d176c127a --out-dir C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps -C incremental=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\incremental -L dependency=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps --extern agent_game_server_core=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libagent_game_server_core-503a4522d59b9544.rlib --extern insta=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libinsta-6b1b60352656c701.rlib --extern proptest=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libproptest-bee24bd0b079e062.rlib --extern rand=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\librand-0f68153521f71c68.rlib --extern rand_chacha=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\librand_chacha-b13f20ee04bb551d.rlib --extern serde=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libserde-d169b3e33b52321d.rlib --extern serde_json=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libserde_json-f978a229ea1df9f1.rlib --extern thiserror=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libthiserror-dcc43303b217b604.rlib --extern tokio=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libtokio-9a61b0d2a3a1b7cb.rlib --extern toml=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libtoml-c301fe879143034c.rlib --extern tracing=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libtracing-4eb4a16136954538.rlib --extern uuid=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libuuid-5a7e7d1c50990e8d.rlib`
+     Running `sccache C:\Users\liumu\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name params --edition=2024 crates\agent-game-core\tests\params.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --warn=clippy::pedantic --deny=clippy::all --deny=clippy::unwrap_used --forbid=unsafe_code --allow=clippy::type_complexity --allow=clippy::too_many_lines --deny=clippy::todo --allow=clippy::single_match_else --warn=clippy::panic --allow=clippy::must_use_candidate --allow=clippy::module_name_repetitions --allow=clippy::missing_panics_doc --allow=clippy::missing_errors_doc --warn=missing_debug_implementations --allow=clippy::match_same_arms --allow=clippy::items_after_statements --deny=clippy::expect_used --allow=clippy::doc_markdown --allow=clippy::doc_lazy_continuation --deny=clippy::dbg_macro --allow=clippy::cast_sign_loss --allow=clippy::cast_precision_loss --allow=clippy::cast_possible_wrap --allow=clippy::cast_possible_truncation --test --check-cfg cfg(docsrs,test) --check-cfg "cfg(feature, values(\"testing\"))" -C metadata=783c8ba0a244d84a -C extra-filename=-65196448d9a2d7cc --out-dir C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps -C incremental=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\incremental -L dependency=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps --extern agent_game_server_core=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libagent_game_server_core-503a4522d59b9544.rlib --extern insta=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libinsta-6b1b60352656c701.rlib --extern proptest=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libproptest-bee24bd0b079e062.rlib --extern rand=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\librand-0f68153521f71c68.rlib --extern rand_chacha=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\librand_chacha-b13f20ee04bb551d.rlib --extern serde=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libserde-d169b3e33b52321d.rlib --extern serde_json=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libserde_json-f978a229ea1df9f1.rlib --extern thiserror=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libthiserror-dcc43303b217b604.rlib --extern tokio=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libtokio-9a61b0d2a3a1b7cb.rlib --extern toml=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libtoml-c301fe879143034c.rlib --extern tracing=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libtracing-4eb4a16136954538.rlib --extern uuid=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libuuid-5a7e7d1c50990e8d.rlib`
+     Running `sccache C:\Users\liumu\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name prompts --edition=2024 crates\agent-game-core\tests\prompts.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --warn=clippy::pedantic --deny=clippy::all --deny=clippy::unwrap_used --forbid=unsafe_code --allow=clippy::type_complexity --allow=clippy::too_many_lines --deny=clippy::todo --allow=clippy::single_match_else --warn=clippy::panic --allow=clippy::must_use_candidate --allow=clippy::module_name_repetitions --allow=clippy::missing_panics_doc --allow=clippy::missing_errors_doc --warn=missing_debug_implementations --allow=clippy::match_same_arms --allow=clippy::items_after_statements --deny=clippy::expect_used --allow=clippy::doc_markdown --allow=clippy::doc_lazy_continuation --deny=clippy::dbg_macro --allow=clippy::cast_sign_loss --allow=clippy::cast_precision_loss --allow=clippy::cast_possible_wrap --allow=clippy::cast_possible_truncation --test --check-cfg cfg(docsrs,test) --check-cfg "cfg(feature, values(\"testing\"))" -C metadata=b6f562765ee5d90a -C extra-filename=-89b5b804bd5ad824 --out-dir C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps -C incremental=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\incremental -L dependency=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps --extern agent_game_server_core=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libagent_game_server_core-503a4522d59b9544.rlib --extern insta=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libinsta-6b1b60352656c701.rlib --extern proptest=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libproptest-bee24bd0b079e062.rlib --extern rand=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\librand-0f68153521f71c68.rlib --extern rand_chacha=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\librand_chacha-b13f20ee04bb551d.rlib --extern serde=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libserde-d169b3e33b52321d.rlib --extern serde_json=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libserde_json-f978a229ea1df9f1.rlib --extern thiserror=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libthiserror-dcc43303b217b604.rlib --extern tokio=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libtokio-9a61b0d2a3a1b7cb.rlib --extern toml=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libtoml-c301fe879143034c.rlib --extern tracing=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libtracing-4eb4a16136954538.rlib --extern uuid=C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\libuuid-5a7e7d1c50990e8d.rlib`
+warning: `agent-game-server-core` (lib test) generated 3 warnings (3 duplicates)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.32s
+  Executable `C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\agent_game_server_core-86c2eaf1c9c668cd.exe`
+  Executable `C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\full_game-22c8b63d176c127a.exe`
+  Executable `C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\params-65196448d9a2d7cc.exe`
+  Executable `C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\prompts-89b5b804bd5ad824.exe`
+
+*** result: Success
+
+*** C:\\Users\\liumu\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe test --verbose --package=agent-game-server-core@0.4.0
+    Blocking waiting for file lock on package cache
+       Fresh unicode-ident v1.0.27
+       Fresh proc-macro2 v1.0.107
+       Fresh quote v1.0.47
+       Fresh rand_core v0.10.1
+       Fresh cfg-if v1.0.5
+       Fresh syn v3.0.9
+       Fresh getrandom v0.4.3
+       Fresh serde_core v1.0.229
+       Fresh once_cell v1.21.4
+       Fresh windows-link v0.2.1
+       Fresh windows-sys v0.61.2
+       Fresh fastrand v2.5.0
+       Fresh cpufeatures v0.3.1
+       Fresh autocfg v1.5.1
+       Fresh chacha20 v0.10.2
+       Fresh tempfile v3.27.0
+       Fresh zerocopy v0.8.63
+       Fresh serde_derive v1.0.229
+       Fresh syn v2.0.119
+       Fresh pin-project-lite v0.2.17
+       Fresh winnow v1.0.4
+       Fresh toml_parser v1.1.5+spec-1.1.0
+       Fresh tracing-attributes v0.1.31
+       Fresh serde v1.0.229
+       Fresh ppv-lite86 v0.2.21
+       Fresh zmij v1.0.23
+       Fresh rand v0.10.3
+       Fresh libc v0.2.191
+       Fresh tracing-core v0.1.36
+       Fresh serde_spanned v1.1.2
+       Fresh toml_datetime v1.1.2+spec-1.1.0
+       Fresh thiserror-impl v2.0.21
+       Fresh tokio-macros v2.7.2
+       Fresh wait-timeout v0.2.1
+       Fresh itoa v1.0.18
+       Fresh fnv v1.0.7
+       Fresh encode_unicode v1.0.0
+       Fresh bit-vec v0.10.1
+       Fresh quick-error v1.2.3
+       Fresh toml_writer v1.1.3+spec-1.1.0
+       Fresh memchr v2.8.3
+       Fresh serde_json v1.0.154
+       Fresh toml v1.1.8+spec-1.1.0
+       Fresh rusty-fork v0.3.1
+       Fresh bit-set v0.11.1
+       Fresh console v0.16.6
+       Fresh tokio v1.54.1
+       Fresh thiserror v2.0.21
+       Fresh tracing v0.1.44
+       Fresh num-traits v0.2.19
+       Fresh rand_chacha v0.10.0
+       Fresh uuid v1.26.1
+       Fresh rand_xorshift v0.5.0
+       Fresh core_detect v1.0.0
+       Fresh bitflags v2.13.2
+       Fresh similar v2.7.0
+       Fresh regex-syntax v0.8.11
+       Fresh unarray v0.1.4
+       Fresh proptest v1.12.0
+       Fresh insta v1.49.0
+warning: unused variable: `previous`
+   --> crates\agent-game-core\src\games\liars_dice.rs:362:21
+    |
+362 |     fn is_valid_bid(previous: Option<&Call>, new_quantity: i64, new_face: i64) -> bool {
+    |                     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_previous`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `new_quantity`
+   --> crates\agent-game-core\src\games\liars_dice.rs:362:46
+    |
+362 |     fn is_valid_bid(previous: Option<&Call>, new_quantity: i64, new_face: i64) -> bool {
+    |                                              ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_new_quantity`
+
+warning: unused variable: `new_face`
+   --> crates\agent-game-core\src\games\liars_dice.rs:362:65
+    |
+362 |     fn is_valid_bid(previous: Option<&Call>, new_quantity: i64, new_face: i64) -> bool {
+    |                                                                 ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_new_face`
+
+warning: `agent-game-server-core` (lib) generated 3 warnings (run `cargo fix --lib -p agent-game-server-core` to apply 3 suggestions)
+warning: `agent-game-server-core` (lib test) generated 3 warnings (3 duplicates)
+       Fresh agent-game-server-core v0.4.0 (C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\crates\agent-game-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running `C:\Users\liumu\AppData\Local\Temp\cargo-mutants-agent-game-2MVTm4.tmp\target\debug\deps\agent_game_server_core-86c2eaf1c9c668cd.exe`
+
+running 157 tests
+test budget::tests::zero_means_do_not_wait ... ok
+test budget::tests::broken_cap_does_not_panic ... ok
+test budget::tests::explicit_default_is_not_the_cap ... ok
+test budget::tests::above_cap_clamps_to_budget ... ok
+test budget::tests::absent_uses_full_budget ... ok
+test config::tests::client_timeout_leaves_room_for_the_server ... ok
+test budget::tests::cap_follows_the_runtime_config ... ok
+test budget::tests::rejects_bool_and_string ... ok
+test config::tests::budget_display_drops_trailing_zero ... ok
+test config::tests::budget_display_keeps_fraction ... ok
+test budget::tests::rejects_non_scalar_json ... ok
+test config::tests::turn_timeout_must_exceed_block_budget ... ok
+test budget::tests::error_message_carries_the_offending_value ... ok
+test error::tests::internal_errors_are_not_client_errors ... ok
+test error::tests::client_errors_are_classified ... ok
+test budget::tests::fractional_values_are_kept ... ok
+test error::tests::messages_are_stable_for_the_prompts ... ok
+test budget::tests::long_values_are_truncated_in_the_error ... ok
+test config::tests::defaults_match_the_documented_values ... ok
+test budget::tests::negative_clamps_to_zero ... ok
+test games::guess_number::tests::custom_range_and_attempts_are_honoured ... ok
+test games::guess_number::tests::a_fresh_game_does_not_time_out ... ok
+test games::guess_number::tests::fractional_floats_are_rejected ... ok
+test games::guess_number::tests::invalid_configuration_is_rejected ... ok
+test games::guess_number::tests::finished_states_declare_only_won_and_lost ... ok
+test games::guess_number::tests::bool_and_string_guesses_are_rejected ... ok
+test games::guess_number::tests::initial_state_is_in_progress_within_the_default_range ... ok
+test games::guess_number::tests::missing_number_is_a_client_error ... ok
+test games::guess_number::tests::out_of_range_guesses_are_rejected ... ok
+test games::guess_number::tests::public_view_hides_the_target_admin_view_has_it ... ok
+test games::guess_number::tests::guessing_reports_direction_and_tracks_history ... ok
+test games::guess_number::tests::action_after_the_game_ends_is_rejected ... ok
+test games::guess_number::tests::guessing_the_target_wins ... ok
+test games::guess_number::tests::integral_floats_are_accepted ... ok
+test games::guess_number::tests::player_view_hides_the_target_too ... ok
+test games::guess_number::tests::single_player_never_waits ... ok
+test games::guess_number::tests::timeout_loses_the_game_exactly_once ... ok
+test games::guess_number::tests::start_resets_a_finished_game_with_a_new_target ... ok
+test games::guess_number::tests::unknown_action_is_rejected ... ok
+test games::guess_number::tests::start_resets_an_in_progress_game ... ok
+test games::guess_number::tests::running_out_of_attempts_loses ... ok
+test games::liars_dice::tests::actions_require_player_token ... ok
+test games::liars_dice::tests::bad_face_is_rejected ... ok
+test games::liars_dice::tests::bid_beyond_the_total_dice_is_rejected ... ok
+test games::liars_dice::tests::challenge_without_a_bid_is_rejected ... ok
+test games::liars_dice::tests::an_active_game_does_not_time_out ... ok
+test games::liars_dice::tests::finished_game_is_ready_for_everyone ... FAILED
+test games::liars_dice::tests::eliminating_a_player_shrinks_the_total_dice ... FAILED
+test games::liars_dice::tests::bidding_ones_requires_half_plus_one ... FAILED
+test games::liars_dice::tests::cannot_challenge_own_bid ... FAILED
+test games::liars_dice::tests::foreign_token_is_rejected ... ok
+test games::liars_dice::tests::first_bid_is_always_valid ... FAILED
+test games::liars_dice::tests::finished_player_view_reveals_all_dice ... FAILED
+test games::liars_dice::tests::invalid_setup_is_rejected ... ok
+test games::liars_dice::tests::game_ends_only_at_one_survivor ... FAILED
+test games::liars_dice::tests::join_requires_a_player_name ... ok
+test games::liars_dice::tests::join_after_start_is_refused ... ok
+test games::liars_dice::tests::join_returns_the_token_and_index ... ok
+test games::liars_dice::tests::join_with_own_token_reconnects ... ok
+test games::liars_dice::tests::leaving_ones_requires_doubling ... FAILED
+test games::liars_dice::tests::lobby_times_out_after_two_minutes ... ok
+test games::guess_number::tests::prompts_never_leak_degradation_markers ... ok
+test games::liars_dice::tests::lower_bid_is_rejected ... FAILED
+test games::liars_dice::tests::not_your_turn_prompt_does_not_claim_the_caller_waited ... ok
+test games::liars_dice::tests::multi_player_engine_exposes_its_tokens ... ok
+test games::liars_dice::tests::negative_and_out_of_range_indices_are_rejected ... ok
+test games::liars_dice::tests::ones_count_as_any_face ... ok
+test games::liars_dice::tests::ones_only_count_as_ones_when_bidding_ones ... ok
+test games::liars_dice::tests::player_view_never_leaks_opponent_dice ... ok
+test games::liars_dice::tests::one_player_waits_two_players_start ... ok
+test games::liars_dice::tests::prompts_render_without_degradation_markers ... ok
+test games::liars_dice::tests::public_view_hides_all_dice ... ok
+test games::liars_dice::tests::ready_only_for_the_current_player ... ok
+test games::liars_dice::tests::same_quantity_higher_face_is_valid ... FAILED
+test games::liars_dice::tests::turn_timeout_exceeds_the_wait_budget ... ok
+test games::liars_dice::tests::timeout_without_a_bid_adds_no_history_entry ... ok
+test games::liars_dice::tests::three_player_loss_costs_one_die ... FAILED
+test games::liars_dice::tests::turn_timeout_clears_the_round_bid ... FAILED
+test games::liars_dice::tests::turn_timeout_eliminates_and_hands_over_the_turn ... ok
+test games::liars_dice::tests::turn_skips_eliminated_players ... FAILED
+test games::liars_dice::tests::state_returns_the_callers_view ... ok
+test games::liars_dice::tests::turn_timeout_records_the_round_as_void ... FAILED
+test games::liars_dice::tests::two_player_loss_is_sudden_death ... FAILED
+test games::liars_dice::tests::unknown_action_is_rejected ... ok
+test games::liars_dice::tests::zero_quantity_is_rejected ... ok
+test games::state_machine::tests::allowed_targets_are_reported ... ok
+test games::liars_dice::tests::waiting_prompt_reports_the_player_count ... ok
+test games::liars_dice::tests::wildcard_changes_the_verdict ... FAILED
+test games::liars_dice::tests::your_turn_prompt_names_the_available_actions ... ok
+test games::state_machine::tests::invalid_transition_is_rejected_with_the_allowed_list ... ok
+test games::state_machine::tests::valid_transition_passes ... ok
+test identity::tests::correct_token_passes ... ok
+test games::liars_dice::tests::without_the_wildcard_the_bidder_would_lose ... FAILED
+test identity::tests::multi_player_rejects_missing_index ... ok
+test identity::tests::multi_player_rejects_out_of_range ... ok
+test identity::tests::multi_player_rejects_wrong_token ... ok
+test identity::tests::multi_player_requires_a_token ... ok
+test identity::tests::single_player_engine_stays_open ... ok
+test manager::tests::compatible_ignores_keys_the_existing_session_does_not_know ... ok
+test manager::tests::a_broken_engine_does_not_stop_the_others ... ok
+test manager::tests::a_finished_engine_does_not_emit_timeout_events ... ok
+test manager::tests::create_and_lookup_a_single_player_session ... ok
+test manager::tests::an_engine_panic_poisons_the_session_instead_of_killing_the_process ... ok
+test manager::tests::a_started_table_is_not_reused_for_matching ... ok
+test manager::tests::finished_sessions_are_reclaimed_after_retention ... ok
+test manager::tests::multi_player_requests_join_a_waiting_table ... ok
+test manager::tests::single_player_games_never_share_a_session ... ok
+test manager::tests::session_ids_are_eight_lowercase_hex_chars ... ok
+test manager::tests::snapshots_carry_the_envelope_not_a_merged_map ... ok
+test manager::tests::unknown_game_type_is_rejected ... ok
+test manager::tests::timeout_events_are_reported_once_then_the_session_is_removed ... ok
+test manager::tests::waiting_tables_with_different_setup_are_not_merged ... ok
+test prompt::tests::broken_braces_are_prefixed ... ok
+test prompt::tests::context_is_not_mutated_by_rendering ... ok
+test prompt::tests::double_braces_are_literal ... ok
+test prompt::tests::float_spec_is_accepted_and_equivalent ... ok
+test prompt::tests::floats_lose_trailing_zeros ... ok
+test prompt::tests::fractional_float_keeps_its_fraction ... ok
+test prompt::tests::hostile_context_values_cannot_make_render_panic ... ok
+test prompt::tests::lists_and_pairs_render_readably ... ok
+test prompt::tests::missing_field_is_marked_not_left_raw ... ok
+test prompt::tests::placeholders_are_collected_in_order ... ok
+test prompt::tests::renders_plain_fields ... ok
+test prompt::tests::toml_assets_parse_and_expose_names ... ok
+test prompt::tests::unmatched_closing_brace_is_also_broken ... ok
+test prompt::tests::unknown_template_is_reported_not_a_panic ... ok
+test prompt::tests::toml_without_templates_table_is_an_error ... ok
+test prompt::tests::unsupported_format_spec_surfaces_as_broken ... ok
+test registry::tests::display_name_can_be_declared_once ... ok
+test registry::tests::display_name_defaults_to_the_machine_key ... ok
+test registry::tests::multiword_game_types_work ... ok
+test registry::tests::non_ascii_names_do_not_panic_on_a_byte_boundary ... ok
+test registry::tests::register_and_lookup ... ok
+test prompt::tests::reload_falls_back_to_defaults_when_the_dir_is_missing ... ok
+test registry::tests::registered_game_can_be_instantiated ... ok
+test registry::tests::the_default_registry_is_empty ... ok
+test registry::tests::tool_name_splitting_prefers_the_longest_prefix ... ok
+test registry::tests::tool_name_without_a_prefix_is_rejected ... ok
+test registry::tests::unknown_game_type_lists_what_is_registered ... ok
+test signal::tests::a_fresh_subscription_reports_no_change ... ok
+test signal::tests::no_lost_wakeup_between_subscribe_and_wait ... ok
+test signal::tests::a_new_subscription_does_not_replay_old_changes ... ok
+test signal::tests::cancelling_a_waiter_leaves_no_trace ... ok
+test signal::tests::notify_wakes_a_waiter ... ok
+test signal::tests::one_notify_wakes_every_waiter ... ok
+test signal::tests::returns_timeout_at_the_budget ... ok
+test signal::tests::wait_until_respects_an_absolute_deadline ... ok
+test signal::tests::waiter_count_is_raii ... ok
+test signal::tests::zero_budget_does_not_wait ... ok
+test wait::tests::already_satisfied_returns_immediately ... ok
+test wait::tests::a_spurious_wakeup_keeps_waiting ... ok
+test wait::tests::cancellation_leaves_no_waiter ... ok
+test wait::tests::false_then_true_within_the_same_wakeup ... ok
+test wait::tests::no_lost_wakeup_when_notified_before_the_first_check ... ok
+test wait::tests::zero_budget_only_checks_once ... ok
+test wait::tests::wakes_when_the_condition_becomes_true ... ok
+test prompt::tests::directory_overrides_the_defaults ... ok
+
+failures:
+
+---- games::liars_dice::tests::finished_game_is_ready_for_everyone stdout ----
+
+thread 'games::liars_dice::tests::finished_game_is_ready_for_everyone' (32244) panicked at crates\agent-game-core\src\games\liars_dice.rs:1403:47:
+called `Result::unwrap()` on an `Err` value: InvalidInput("叫数必须比上家大。当前: 0×0 → 你叫: 3×2")
+
+---- games::liars_dice::tests::eliminating_a_player_shrinks_the_total_dice stdout ----
+
+thread 'games::liars_dice::tests::eliminating_a_player_shrinks_the_total_dice' (12684) panicked at crates\agent-game-core\src\games\liars_dice.rs:1299:47:
+called `Result::unwrap()` on an `Err` value: InvalidInput("叫数必须比上家大。当前: 0×0 → 你叫: 3×2")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- games::liars_dice::tests::bidding_ones_requires_half_plus_one stdout ----
+
+thread 'games::liars_dice::tests::bidding_ones_requires_half_plus_one' (15208) panicked at crates\agent-game-core\src\games\liars_dice.rs:1134:47:
+called `Result::unwrap()` on an `Err` value: InvalidInput("叫数必须比上家大。当前: 0×0 → 你叫: 4×3")
+
+---- games::liars_dice::tests::cannot_challenge_own_bid stdout ----
+
+thread 'games::liars_dice::tests::cannot_challenge_own_bid' (8808) panicked at crates\agent-game-core\src\games\liars_dice.rs:1153:47:
+called `Result::unwrap()` on an `Err` value: InvalidInput("叫数必须比上家大。当前: 0×0 → 你叫: 1×2")
+
+---- games::liars_dice::tests::first_bid_is_always_valid stdout ----
+
+thread 'games::liars_dice::tests::first_bid_is_always_valid' (26084) panicked at crates\agent-game-core\src\games\liars_dice.rs:1086:9:
+assertion failed: bid(&mut engine, 0, &tokens[0], 1, 1).is_ok()
+
+---- games::liars_dice::tests::finished_player_view_reveals_all_dice stdout ----
+
+thread 'games::liars_dice::tests::finished_player_view_reveals_all_dice' (24412) panicked at crates\agent-game-core\src\games\liars_dice.rs:1473:47:
+called `Result::unwrap()` on an `Err` value: InvalidInput("叫数必须比上家大。当前: 0×0 → 你叫: 3×2")
+
+---- games::liars_dice::tests::game_ends_only_at_one_survivor stdout ----
+
+thread 'games::liars_dice::tests::game_ends_only_at_one_survivor' (29120) panicked at crates\agent-game-core\src\games\liars_dice.rs:1265:47:
+called `Result::unwrap()` on an `Err` value: InvalidInput("叫数必须比上家大。当前: 0×0 → 你叫: 2×2")
+
+---- games::liars_dice::tests::leaving_ones_requires_doubling stdout ----
+
+thread 'games::liars_dice::tests::leaving_ones_requires_doubling' (16420) panicked at crates\agent-game-core\src\games\liars_dice.rs:1144:47:
+called `Result::unwrap()` on an `Err` value: InvalidInput("叫数必须比上家大。当前: 0×0 → 你叫: 2×1")
+
+---- games::liars_dice::tests::lower_bid_is_rejected stdout ----
+
+thread 'games::liars_dice::tests::lower_bid_is_rejected' (5584) panicked at crates\agent-game-core\src\games\liars_dice.rs:1117:47:
+called `Result::unwrap()` on an `Err` value: InvalidInput("叫数必须比上家大。当前: 0×0 → 你叫: 3×3")
+
+---- games::liars_dice::tests::same_quantity_higher_face_is_valid stdout ----
+
+thread 'games::liars_dice::tests::same_quantity_higher_face_is_valid' (8496) panicked at crates\agent-game-core\src\games\liars_dice.rs:1126:47:
+called `Result::unwrap()` on an `Err` value: InvalidInput("叫数必须比上家大。当前: 0×0 → 你叫: 3×3")
+
+---- games::liars_dice::tests::three_player_loss_costs_one_die stdout ----
+
+thread 'games::liars_dice::tests::three_player_loss_costs_one_die' (33784) panicked at crates\agent-game-core\src\games\liars_dice.rs:1239:47:
+called `Result::unwrap()` on an `Err` value: InvalidInput("叫数必须比上家大。当前: 0×0 → 你叫: 3×2")
+
+---- games::liars_dice::tests::turn_timeout_clears_the_round_bid stdout ----
+
+thread 'games::liars_dice::tests::turn_timeout_clears_the_round_bid' (12916) panicked at crates\agent-game-core\src\games\liars_dice.rs:1323:47:
+called `Result::unwrap()` on an `Err` value: InvalidInput("叫数必须比上家大。当前: 0×0 → 你叫: 6×3")
+
+---- games::liars_dice::tests::turn_skips_eliminated_players stdout ----
+
+thread 'games::liars_dice::tests::turn_skips_eliminated_players' (14792) panicked at crates\agent-game-core\src\games\liars_dice.rs:1286:47:
+called `Result::unwrap()` on an `Err` value: InvalidInput("叫数必须比上家大。当前: 0×0 → 你叫: 1×2")
+
+---- games::liars_dice::tests::turn_timeout_records_the_round_as_void stdout ----
+
+thread 'games::liars_dice::tests::turn_timeout_records_the_round_as_void' (31640) panicked at crates\agent-game-core\src\games\liars_dice.rs:1340:47:
+called `Result::unwrap()` on an `Err` value: InvalidInput("叫数必须比上家大。当前: 0×0 → 你叫: 2×3")
+
+---- games::liars_dice::tests::two_player_loss_is_sudden_death stdout ----
+
+thread 'games::liars_dice::tests::two_player_loss_is_sudden_death' (26200) panicked at crates\agent-game-core\src\games\liars_dice.rs:1252:47:
+called `Result::unwrap()` on an `Err` value: InvalidInput("叫数必须比上家大。当前: 0×0 → 你叫: 3×2")
+
+---- games::liars_dice::tests::wildcard_changes_the_verdict stdout ----
+
+thread 'games::liars_dice::tests::wildcard_changes_the_verdict' (17568) panicked at crates\agent-game-core\src\games\liars_dice.rs:1064:47:
+called `Result::unwrap()` on an `Err` value: InvalidInput("叫数必须比上家大。当前: 0×0 → 你叫: 5×3")
+
+---- games::liars_dice::tests::without_the_wildcard_the_bidder_would_lose stdout ----
+
+thread 'games::liars_dice::tests::without_the_wildcard_the_bidder_would_lose' (12492) panicked at crates\agent-game-core\src\games\liars_dice.rs:1075:47:
+called `Result::unwrap()` on an `Err` value: InvalidInput("叫数必须比上家大。当前: 0×0 → 你叫: 6×3")
+
+
+failures:
+    games::liars_dice::tests::bidding_ones_requires_half_plus_one
+    games::liars_dice::tests::cannot_challenge_own_bid
+    games::liars_dice::tests::eliminating_a_player_shrinks_the_total_dice
+    games::liars_dice::tests::finished_game_is_ready_for_everyone
+    games::liars_dice::tests::finished_player_view_reveals_all_dice
+    games::liars_dice::tests::first_bid_is_always_valid
+    games::liars_dice::tests::game_ends_only_at_one_survivor
+    games::liars_dice::tests::leaving_ones_requires_doubling
+    games::liars_dice::tests::lower_bid_is_rejected
+    games::liars_dice::tests::same_quantity_higher_face_is_valid
+    games::liars_dice::tests::three_player_loss_costs_one_die
+    games::liars_dice::tests::turn_skips_eliminated_players
+    games::liars_dice::tests::turn_timeout_clears_the_round_bid
+    games::liars_dice::tests::turn_timeout_records_the_round_as_void
+    games::liars_dice::tests::two_player_loss_is_sudden_death
+    games::liars_dice::tests::wildcard_changes_the_verdict
+    games::liars_dice::tests::without_the_wildcard_the_bidder_would_lose
+
+test result: FAILED. 140 passed; 17 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+error: test failed, to rerun pass `-p agent-game-server-core --lib`
+
+*** result: Failure(101)

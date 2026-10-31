@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/engine.rs
++++ replace GameEngine::player_tokens -> Option<Vec<String>> with Some(vec![String::new()])
+@@ -354,17 +354,17 @@
+ 
+     /// 按 token 查玩家编号，用于断线重连。
+     fn find_player_by_token(&self, _token: &str) -> Option<usize> {
+         None
+     }
+ 
+     /// 多人引擎的玩家 token 列表，交给 [`crate::identity`] 校验。
+     fn player_tokens(&self) -> Option<Vec<String>> {
+-        None
++        Some(vec![String::new()]) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 提示词仓库（热重载用）。
+     fn prompts(&self) -> &PromptStore;
+ 
+     /// 创建时的配置参数，用于"同一张桌子"的匹配判断。
+     fn setup_params(&self) -> CreateParams;
+ 

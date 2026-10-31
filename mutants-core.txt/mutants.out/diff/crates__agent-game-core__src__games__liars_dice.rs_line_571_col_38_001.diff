@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace - with / in LiarsDiceEngine::build_prompt
+@@ -563,17 +563,17 @@
+             })).collect::<Vec<_>>(),
+         })
+     }
+ 
+     fn build_prompt(&self, player_index: Option<usize>) -> String {
+         let wait_budget = self.block_budget.as_secs_f64();
+         let turn_timeout = self.turn_timeout.as_secs_f64();
+         let waited = self.last_action.elapsed().as_secs();
+-        let remaining = turn_timeout - (self.last_action.elapsed().as_secs_f64());
++        let remaining = turn_timeout / /* ~ changed by cargo-mutants ~ */ (self.last_action.elapsed().as_secs_f64());
+         let remaining = remaining.max(0.0);
+ 
+         match self.phase {
+             "finished" => {
+                 let winner = self
+                     .winner
+                     .and_then(|index| self.players.get(index))
+                     .map_or("?", |player| player.name.as_str());

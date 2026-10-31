@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/manager.rs
++++ replace == with != in GameManager::mark_expired
+@@ -411,17 +411,17 @@
+     /// 返回 `true` 表示这是第一次上报。顺带把缓存限制在有界范围内，
+     /// 避免长期运行后无限增长（FIFO 淘汰）。
+     fn mark_expired(&self, session_id: &str, kind: &'static str) -> bool {
+         let Ok(mut seen) = self.seen_expired.lock() else {
+             return true;
+         };
+         if seen
+             .iter()
+-            .any(|(id, existing)| id == session_id && *existing == kind)
++            .any(|(id, existing)| id != /* ~ changed by cargo-mutants ~ */ session_id && *existing == kind)
+         {
+             return false;
+         }
+         seen.push((session_id.to_owned(), kind));
+         while seen.len() > MAX_SEEN_EXPIRED {
+             seen.remove(0);
+         }
+         true

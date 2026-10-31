@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/engine.rs
++++ replace GameEngine::find_player_by_token -> Option<usize> with Some(0)
+@@ -349,17 +349,17 @@
+     ///
+     /// 单人即时游戏用默认实现——永不等待。
+     fn is_ready_for(&self, _player_index: usize) -> bool {
+         true
+     }
+ 
+     /// 按 token 查玩家编号，用于断线重连。
+     fn find_player_by_token(&self, _token: &str) -> Option<usize> {
+-        None
++        Some(0) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 多人引擎的玩家 token 列表，交给 [`crate::identity`] 校验。
+     fn player_tokens(&self) -> Option<Vec<String>> {
+         None
+     }
+ 
+     /// 提示词仓库（热重载用）。

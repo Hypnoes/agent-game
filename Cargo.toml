@@ -1,0 +1,85 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/agent-game-core",
+    "crates/agent-game-mcp",
+    "crates/agent-game-server",
+]
+
+[workspace.package]
+version = "0.4.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+authors = ["agent-game contributors"]
+repository = "https://github.com/Hypnoes/agent-game"
+
+[workspace.dependencies]
+agent-game-server-core = { path = "crates/agent-game-core" }
+agent-game-server-mcp = { path = "crates/agent-game-mcp" }
+
+anyhow = "1"
+async-trait = "0.1"
+axum = { version = "0.8", features = ["ws", "macros"] }
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+http = "1"
+rand = "0.10"
+rand_chacha = "0.10"
+rmcp = "3.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+subtle = "2"
+thiserror = "2"
+tokio = "1"
+toml = "1"
+tower = "0.5"
+tower-http = { version = "0.7", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# 请求路径上禁止 unwrap/expect：一个 None 就是一次 500。
+# 库内部与测试不在此列——clippy 的 lint 是整 crate 生效的，所以这两条
+# 靠 `#[expect]` 在确实需要的地方局部放行，而不是全局关掉。
+unwrap_used = "deny"
+expect_used = "deny"
+todo = "deny"
+dbg_macro = "deny"
+# `panic!` 不在全局禁掉：内置提示词 TOML 是编译期资产，写错时启动即失败
+# 比"跑到第一次渲染才发现"好得多。真正要守的是"请求路径不能 panic"，
+# 那条由 `unwrap_used`/`expect_used` 加代码审查来保证。
+panic = "warn"
+# 中文字符串与注释经常让行宽超限，行宽交给 rustfmt
+too_many_lines = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+# 这些 pedantic 规则针对的是英文文档排版，中英混排下误报很多
+doc_markdown = "allow"
+# 类型转换的 truncation：骰子数量、秒数都在安全范围内，逐个 as 更清楚
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+# 中文注释的列表缩进规则误报
+doc_lazy_continuation = "allow"
+# 一个函数里两段 `expect` 是测试的常态
+items_after_statements = "allow"
+# 与「policy = deny」冲突的写法提示：统一用显式版本
+single_match_else = "allow"
+match_same_arms = "allow"
+# 复杂类型（工厂闭包）在注册表里只有一处，内联更清楚
+type_complexity = "allow"
+
+[workspace.metadata.mutants]
+# 等价变异体在 .config/mutants.toml 里逐个说明

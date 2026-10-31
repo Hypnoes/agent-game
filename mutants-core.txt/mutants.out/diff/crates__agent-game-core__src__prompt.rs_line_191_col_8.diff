@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/prompt.rs
++++ delete ! in parse
+@@ -183,17 +183,17 @@
+                     continue;
+                 }
+                 return Err("花括号不配对：'}' 没有对应的 '{'".to_owned());
+             }
+             other => literal.push(other),
+         }
+     }
+ 
+-    if !literal.is_empty() {
++    if  /* ~ changed by cargo-mutants ~ */literal.is_empty() {
+         segments.push(Segment::Literal(literal));
+     }
+     Ok(segments)
+ }
+ 
+ fn split_field(field: &str) -> Result<(String, bool), String> {
+     if field.is_empty() {
+         return Err("空占位符 '{}'".to_owned());

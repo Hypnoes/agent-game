@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace LiarsDiceEngine::winner -> Option<usize> with Some(1)
+@@ -217,17 +217,17 @@
+ 
+     #[must_use]
+     pub fn call_history(&self) -> &[Call] {
+         &self.call_history
+     }
+ 
+     #[must_use]
+     pub fn winner(&self) -> Option<usize> {
+-        self.winner
++        Some(1) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     #[must_use]
+     pub fn loser(&self) -> Option<usize> {
+         self.loser
+     }
+ 
+     #[must_use]

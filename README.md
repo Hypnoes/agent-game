@@ -1,6 +1,6 @@
 # agent-game
 
-AI Agent 游戏框架 — 新增游戏只需写一个 Engine 文件，MCP 工具、API 路由、Admin 查询全部自动生成。
+AI Agent 游戏框架（Rust 实现）— 新增游戏只需注册一个 `GameMeta`，MCP 工具、REST 路由、Admin 页面全部自动生效。
 
 ## 架构
 
@@ -8,141 +8,97 @@ AI Agent 游戏框架 — 新增游戏只需写一个 Engine 文件，MCP 工具
 flowchart TB
     subgraph Agent["Agent 运行时"]
         LLM[LLM]
-        MC["MCP 客户端\nstreamable-http"]
+        MC["MCP 客户端<br/>streamable-http"]
     end
 
-    subgraph Server["FastAPI Game Server :8800"]
-        MCP["/mcp\nMCP 端点"]
-        GM[GameManager\nsession 路由 + 生命周期]
+    subgraph Server["agent-game-server :8800"]
+        direction TB
+        MCP["/mcp<br/>rmcp StreamableHttpService"]
+        REST["/api/v1/games/*"]
+        Admin["/api/v1/admin/*<br/>WS /api/v1/admin/ws"]
+        GM["GameManager<br/>session 路由 + 生命周期"]
         subgraph Games["Games"]
             GN[GuessNumberEngine]
             LD[LiarsDiceEngine]
         end
-        API["/games/*\n/admin/*\nWebSocket /admin/ws"]
+        Poller["poller<br/>唯一超时结算点"]
     end
 
     LLM <--> MC
     MC <-->|"JSON-RPC over Streamable HTTP"| MCP
     MCP --> GM
-    API --> GM
+    REST --> GM
+    Admin --> GM
     GM --> GN
     GM --> LD
+    Poller --> GM
 
     style Agent fill:#1f6feb22,stroke:#58a6ff
     style Server fill:#d2991d22,stroke:#d2991d
 ```
 
-**零改动加游戏:** 新 Engine 实现自描述协议 → `GameManager.register()` → 全部自动生效。
+三个 crate，职责单一：
 
-MCP 端点与 REST 端点跑在同一个 FastAPI app 上（`game_server.create_app()`），共享同一个 `GameManager` 与同一批引擎实例：
+| crate | 职责 | 依赖 |
+|---|---|---|
+| `agent-game-server-core` | 规则、预算、身份、等待原语、提示词、注册表、session 路由 | 无网络、无 axum |
+| `agent-game-server-mcp` | `rmcp::ServerHandler` 适配：工具定义 + 一次调用 | core + rmcp |
+| `agent-game-server-server` | axum app：REST + Admin + WS + `/mcp` 挂载 + 轮询 | core + mcp + axum |
+
+三条入口共用同一份 `AppState`（注册表、manager、配置、admin token），因此"谁是谁"的判断不会在三条路径上分叉。
+
+**零改动加游戏：** 新引擎实现 `GameEngine` trait，注册一个 `GameMeta`（机器键 + 展示名 + 玩家模式 + 构造函数），MCP 工具面与 admin 展示名全部自动生效。
+
+## 端点
 
 | 端点 | 用途 |
 |---|---|
-| `POST /mcp` | MCP over Streamable HTTP（`GET` / `DELETE` 也由同一个 route 处理） |
-| `GET /games/tools` | MCP 工具定义（`manager.describe_all_tools()`） |
-| `POST /games/{game_type}` | 创建 session |
-| `POST /games/{session_id}/action` | 执行动作；`action=state` 走阻塞等待 |
-| `GET /games/{session_id}` | 公开状态，已剥离 `SECRET_STATE_KEYS`（`target` / `all_dice`） |
-| `GET /games/{session_id}/state/{player_index}` | 玩家视角（多人游戏需 `player_token`），立即返回不等待 |
-| `/admin/*` | Dashboard、对局列表与详情、提示词热重载（全部需 `X-Admin-Token`） |
-| `WS /admin/ws?token=` | 实时推送；浏览器不能设自定义头，token 走查询参数 |
+| `GET /health` | `{ok, version, games, sessions}` |
+| `GET /api/v1/games/tools` | 工具定义，按游戏分组，带 `display_name` 与 `player_mode` |
+| `GET /api/v1/games/tools/{game_type}` | 单个游戏的工具面 |
+| `POST /api/v1/games/{id}` | 创建/加入 session（`id` 此时是游戏类型） |
+| `POST /api/v1/games/{id}/actions` | 执行动作；`action=state` 走阻塞等待 |
+| `GET /api/v1/games/{id}` | 公开视图，**不含**秘密字段 |
+| `GET /api/v1/games/{id}/players/{idx}` | 玩家视角；多人游戏需 `X-Player-Token` 头；立即返回 |
+| `GET /api/v1/admin/games` | 对局列表（需 `X-Admin-Token`） |
+| `GET /api/v1/admin/games/{id}` | 对局详情，**唯一**能看到秘密的出口 |
+| `POST /api/v1/admin/prompts/reload` | 提示词热重载 |
+| `GET /admin?token=` | 仪表盘；只在已出示正确 token 时注入 `window.ADMIN_TOKEN` |
+| `WS /api/v1/admin/ws?token=` | 实时推送；浏览器不能设自定义头，token 走查询参数 |
+| `POST /mcp` | MCP over Streamable HTTP |
 
-## 项目结构
+> 路径参数统一叫 `{id}`：axum 0.8 把 `/games/{game_type}` 与 `/games/{session_id}`
+> 视为同一个匹配形状，不同参数名会让其中一条注册失败。语义由 HTTP 方法区分。
 
-```
-agent-game/
-├── main.py                            # 启动入口（uv run main.py）
-├── src/
-│   └── agent_game_server/             # 服务端（MCP 端点 + REST + Admin 同一个 app）
-│       ├── __init__.py                # 包 re-export
-│       ├── config.py                  # 共享常量（版本号、等待预算）+ timeout 解析器
-│       ├── manager.py                 # GameManager（session 路由 + 超时回收）
-│       ├── mcp_server.py              # MCP 协议适配层（工具定义 + 动作路由）
-│       ├── game_server.py             # create_app()：MCP 端点 + Game API + Admin + WebSocket
-│       ├── cli.py                     # agent-game-server CLI（在这里绑定端口 8800）
-│       ├── prompt.py                  # 模板/Prompt 渲染
-│       ├── templates/
-│       │   └── admin.html             # 管理仪表盘
-│       ├── assets/
-│       │   ├── guess_number_prompts.py
-│       │   └── liars_dice_prompts.py
-│       └── games/
-│           ├── __init__.py
-│           ├── game_engine.py         # Engine 协议
-│           ├── state_machine.py       # 通用状态机
-│           ├── signal.py              # ChangeSignal（阻塞等待原语）
-│           ├── guess_number.py        # 猜数字引擎
-│           └── liars_dice.py          # 大话骰引擎
-├── tests/
-│   ├── conftest.py                    # 共享夹具：造局、摆骰子、起 app、连 MCP
-│   ├── test_engine.py                 # 猜数字引擎
-│   ├── test_liars_dice.py             # 大话骰引擎
-│   ├── test_rules.py                  # 大话骰规则：叫数合法性 / 淘汰 / 身份校验
-│   ├── test_manager.py                # GameManager 路由与生命周期
-│   ├── test_matching.py               # 多人匹配与配置兼容
-│   ├── test_game_server.py            # REST 端点
-│   ├── test_mcp_server.py             # MCP over HTTP（ASGI 内存传输，不监听 socket）
-│   ├── test_wait.py                   # ChangeSignal 与阻塞式等待
-│   ├── test_prompts.py                # 提示词模板：时间数值由调用方传入，不写死秒数
-│   ├── test_prompt_safety.py          # 提示词层永不向调用方抛异常
-│   ├── test_poller.py                 # 超时轮询与 admin 广播
-│   ├── test_invariants.py             # 规则不变量（百搭、入座时机、通知、超时清叫数）
-│   ├── test_full_game.py              # 端到端整局（含中途超时）
-│   ├── test_contract.py               # REST 与 MCP 对同一输入必须同类回答
-│   ├── test_http_contract.py          # HTTP 输入健壮性与 admin 鉴权
-│   ├── test_mcp_identity.py           # session_id 不证明身份
-│   ├── test_block_budget.py           # timeout 解析器唯一实现
-│   ├── test_cli.py                    # 启动路径与 admin token 打印
-│   └── test_meta.py                   # 元测试：套件自身的结构与契约
-├── scripts/
-│   └── mutation_check.py              # 变异测试：验证套件真的能抓到 bug
-├── docs/
-│   └── issues/                        # 设计与实施记录（001 阻塞等待、002 MCP 迁移）
-├── pyproject.toml
-├── uv.lock
-├── AGENTS.md                          # 改动本仓库时的硬约束
-└── README.md
-```
-
-## 引擎自描述协议
-
-新增游戏只需实现以下接口（duck typing，不强制基类）：
-
-| 属性/方法 | 说明 |
-|-----------|------|
-| `game_type: str` | 唯一标识，如 `"my_game"` |
-| `game_name: str` | 人类可读名称 |
-| `player_mode: str` | `"single"` 或 `"multi"` |
-| `describe_tools()` | 类方法，返回 MCP Tool 列表 `[{name, description, input_schema}]`；工具名以 `<game_type>_` 开头 |
-| `handle_action(action, **params)` | 执行动作，返回 `{prompt, ...}` |
-| `get_public_state()` | Admin 可见的公开状态 |
-| `get_player_state(player_index)` | 玩家视角状态 + prompt 文本 |
-| `check_timeout(now)` | 超时检查 |
-| `wait_for_change(player_index, timeout)` | 可选，`async`。回合制游戏实现它，让非当前回合的 `state` 调用在服务端挂起 |
-| `_find_player_by_token(token)` | 可选。多人引擎实现它，`player_token` 身份复用依赖这个方法 |
-| `finished_states` | 可选类属性。该引擎的终态名集合；不声明则用默认的 `{"finished", "won", "lost"}` |
-| `secret_keys` | 可选类属性。公开状态里要剥掉的键；不声明则用默认的 `{"target", "all_dice"}` |
-
-后两个属性是"零改动加游戏"的一部分：终态叫 `draw` 或要藏一个 `solution` 字段的引擎，
-只需在自己的类上声明，不用回来改框架。
+旧版端点与新版的完整映射见 [`docs/legacy/migration.md`](docs/legacy/migration.md)。
 
 ## 快速开始
 
 ```bash
-# 安装依赖
-uv sync
+# 构建
+cargo build --release
 
-# 启动服务端（MCP 端点 + Game API + Admin，端口 8800）
-uv run main.py
+# 启动（默认 0.0.0.0:8800）
+cargo run --release
 
-# 或安装为全局命令
-uv tool install .
-agent-game-server
+# 自定义端口与时限
+cargo run --release -- --port 9000 --block-budget 30 --turn-timeout 45
+```
+
+启动时会打印 admin token（未设置 `AGENT_GAME_ADMIN_TOKEN` 时为本次运行随机生成）：
+
+```
+🎮 agent-game starting...
+   Game API:   http://localhost:8800
+   Admin:      http://localhost:8800/admin?token=<TOKEN>
+   Admin 查询头: X-Admin-Token: <TOKEN>
+   MCP:        http://localhost:8800/mcp
 ```
 
 服务端自身暴露 MCP 端点 `http://127.0.0.1:8800/mcp`（Streamable HTTP），Agent 直接连接，本地无需任何可执行产物。
 
-Agent MCP 配置：
+### Agent MCP 配置
+
 ```yaml
 - id: mcp-agent-game
   name: '@deepseek-ai/dsh-mcp-client'
@@ -153,53 +109,82 @@ Agent MCP 配置：
     toolCallTimeoutMs: 70000
 ```
 
-工具名带 `mcp__agent_game__` 前缀（`serverName: agent_game` 决定的），例如 `mcp__agent_game__liars_dice_join`、`mcp__agent_game__guess_number_guess`。
+工具名带 `mcp__agent_game__` 前缀（`serverName: agent_game` 决定的），例如
+`mcp__agent_game__liars_dice_join`、`mcp__agent_game__guess_number_guess`。
 
 `toolCallTimeoutMs` 必须大于服务端 55 秒的等待预算。默认值 60000 会在服务端返回之前先触发传输层超时，Agent 看到的是超时错误而不是对局状态。
 
-`state` 工具接受可选参数 `timeout`（秒，缺省 55，上限 55）：传 `0` 表示本次不等待、立即返回；省略或传 `null` 表示用满等待预算。解析在 `config.parse_block_budget()` 里，MCP 与 REST 两条传输共用同一份实现。
-
-### 从旧配置迁移
-
-本地 stdio 客户端已删除（`src/agent_game_mcp/` 整个目录不再存在），以 `command` 启动本地进程的旧配置不再可用，也不提供兼容路径。
-
-| | 配置 |
-|---|---|
-| 旧（已失效） | `{"mcpServers": {"agent-game": {"command": "agent-game-mcp"}}}` |
-| 新 | 上面「Agent MCP 配置」中的 streamable-http 块 |
-
-旧配置以 `command` 启动本地进程，新配置以 `url` 直连服务端；两者传输方式不同，无法自动转换。
+`state` 工具接受可选参数 `timeout`（秒，缺省 55，上限 55）：传 `0` 表示本次不等待、立即返回；省略或传 `null` 表示用满等待预算。解析在 `core::budget::resolve_budget()` 里，MCP 与 REST 两条传输共用同一份实现。
 
 ### 环境变量
 
 | 变量 | 说明 |
 |---|---|
-| `AGENT_GAME_ADMIN_TOKEN` | Admin 鉴权令牌。未设置时在导入 `game_server` 时随机生成，并由 `cli.py` 在启动时打印出来 |
+| `AGENT_GAME_ADMIN_TOKEN` | Admin 鉴权令牌。未设置时在启动时随机生成，并由启动横幅打印出来 |
+| `AGENT_GAME_PROMPT_DIR` | 提示词目录（可选）。设置后覆盖内置模板，`prompts/reload` 重新读盘 |
+| `RUST_LOG` | 日志级别，默认 `agent_game=info,warn` |
 
-只有这一个环境变量，没有其它开关。
+## 引擎协议
+
+```rust
+pub trait GameEngine: std::fmt::Debug + Send {
+    fn game_type(&self) -> &'static str;              // 机器键：URL、工具名前缀、匹配键
+    fn player_mode(&self) -> PlayerMode;              // Single | Multi
+    fn finished_states(&self) -> &'static [&'static str];  // 有默认值
+    fn sensitive_keys(&self) -> &'static [&'static str];   // 仅供测试当期望清单
+    fn phase(&self) -> &'static str;
+    fn admin_view(&self) -> Value;                    // 含秘密
+    fn public_view(&self) -> Value;                   // 由构造保证不含秘密
+    fn player_view(&self, idx: Option<usize>) -> Result<PlayerView, EngineError>;
+    fn handle_action(&mut self, action: &str, params: ActionParams) -> Result<PlayerView, EngineError>;
+    fn check_timeout(&mut self, now: Instant) -> Result<Option<TimeoutEvent>, EngineError>;
+    fn signal(&self) -> Arc<ChangeSignal>;            // 等待原语
+    fn is_ready_for(&self, idx: usize) -> bool;       // 有默认值：单人游戏永不等待
+    fn prompts(&self) -> &PromptStore;
+    // …还有 find_player_by_token / player_tokens / setup_params
+}
+```
+
+三个设计要点，每一条都对应旧实现踩过的坑：
+
+1. **`admin_view` 与 `public_view` 分别构造。** 不做"返回全量 JSON 再按名字删键"——
+   那样 `secret_keys` 拼错一个字母就会静默泄密。改成构造之后，写漏一个字段的后果
+   是"测试红"。
+2. **全同步，等待在框架里。** 引擎只回答"现在轮到他了吗"（`is_ready_for`）与
+   "变了就叫我"（`signal`），循环在 `core::wait::wait_for`。于是 `dyn GameEngine`
+   直接可用，不需要 `async-trait`。
+3. **`check_timeout` 返回 `Result`。** 布尔返回值无法区分"没事"与"我坏了"，
+   manager 逐 session 隔离错误，一个坏引擎不影响其余对局。
 
 ## 测试与验收
 
 ```bash
-uv sync --all-groups
-uv run ruff check .                     # 静态检查
-uv run coverage run -m pytest           # 单元测试 + 覆盖率（门槛 90%）
-uv run python scripts/mutation_check.py # 变异测试：验收判据
+cargo fmt --all -- --check          # 格式
+cargo clippy --all-targets -- -D warnings   # 静态检查
+cargo test                          # 单元 + 集成
+cargo llvm-cov --workspace --summary-only   # 覆盖率
+cargo mutants -p agent-game-server-core     # 变异测试
 ```
 
-三者的分工：
+四者的分工：
 
 | 命令 | 回答的问题 |
 |---|---|
-| `pytest` | 代码有没有坏 |
-| `coverage report` | 哪一行没被执行过 |
-| `mutation_check.py` | **测试有没有用** —— 往源码注入缺陷，套件会不会红 |
+| `cargo test` | 代码有没有坏 |
+| `llvm-cov` | 哪一行没被执行过 |
+| `clippy` | 有没有常见写法错误 |
+| `mutants` | **测试有没有用** —— 往源码注入缺陷，套件会不会红 |
 
-覆盖率做不到第三件事。它只说明"这行被跑过"，不说明"这条规则被守住"——
-一个把全场骰子固定成同一个数的测试可以跑遍所有代码行，却从未触达百搭规则。
+覆盖率做不到第四件事。它只说明"这行被跑过"，不说明"这条规则被守住"。
 
-`mutation_check.py` 内置 50 个变异体，每个都是真实缺陷（删掉一条通知、放宽一处
-鉴权、把胜负判反）。全部被杀死才算通过。已知等价变异体会被标出来并说明原因。
+测试分四层：
+
+| 层 | 位置 | 判据 |
+|---|---|---|
+| 规则层 | `core` 的 `#[cfg(test)]` 模块 | 给定骰子与动作序列，结果必须确定 |
+| 整局层 | `crates/agent-game-core/tests/full_game.rs` | 固定种子跑到底，每手都合法 |
+| 契约层 | `crates/agent-game-server/tests/http_contract.rs`、`mcp_transport.rs` | 调用方拿到什么：状态码、错误类别、秘密边界、鉴权 |
+| 不变量层 | `crates/agent-game-server/tests/invariants.rs` | 必须永远成立的规则（百搭、通知、秘密、终态） |
 
 ## 当前游戏
 
@@ -210,13 +195,13 @@ uv run python scripts/mutation_check.py # 变异测试：验收判据
 
 ## 管理后台
 
-http://localhost:8800/admin?token=<ADMIN_TOKEN>
+http://localhost:8800/admin?token=&lt;ADMIN_TOKEN&gt;
 
-- 提供 Admin Dashboard HTML
-- 提供 `/admin/games` 列表接口
-- 提供 `/admin/games/{session_id}` 详情接口
-- 提供 `POST /admin/reload-prompts` 提示词热重载
-- 提供 WebSocket `/admin/ws` 实时推送状态更新
-- 需要通过 `X-Admin-Token` 头校验权限；token 在导入时解析（环境变量或随机生成），`/admin` 只在请求方已出示该 token 时才把它注入页面
+- Dashboard HTML（展示名由服务端下发，页面不硬编码任何游戏名）
+- `/api/v1/admin/games` 列表、`/api/v1/admin/games/{id}` 详情
+- `POST /api/v1/admin/prompts/reload` 提示词热重载
+- `WS /api/v1/admin/ws` 实时推送（只推"状态变了"，不含内容）
+- 全部需 `X-Admin-Token`；`/admin` 只在请求方已出示该 token 时才把它注入页面
 
-`target` / `all_dice` 这类秘密信息只能通过 `/admin/*` 看到，`GET /games/{sid}` 会剥掉它们。
+`target` / `all_dice` 这类秘密信息只能通过 `/api/v1/admin/*` 看到，
+`GET /api/v1/games/{id}` 只返回公开视图。

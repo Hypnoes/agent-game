@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace > with >= in LiarsDiceEngine::build_prompt
+@@ -620,17 +620,17 @@
+                         .map_or("?", |player| player.name.as_str());
+                     let mut patience = String::new();
+                     if waited > 20 {
+                         patience = self.render(
+                             "patience_20",
+                             &Ctx::new().with("turn_timeout", turn_timeout),
+                         );
+                     }
+-                    if waited > 40 {
++                    if waited >= /* ~ changed by cargo-mutants ~ */ 40 {
+                         patience = self.render(
+                             "patience_40",
+                             &Ctx::new().with("remaining_time", remaining as i64),
+                         );
+                     }
+                     let call_str = self.current_call.as_ref().map_or_else(
+                         || "无".to_owned(),
+                         |call| format!("{}×{}", call.quantity, call.face),

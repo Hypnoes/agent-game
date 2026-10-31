@@ -1,0 +1,41 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace LiarsDiceEngine::check_turn -> Result<(), EngineError> with Ok(())
+@@ -309,37 +309,17 @@
+         player_index: Option<usize>,
+         player_token: Option<&str>,
+     ) -> Result<usize, EngineError> {
+         check_player_identity(Some(&self.players), player_index, player_token)?;
+         player_index.ok_or_else(|| EngineError::InvalidIndex("缺少 player_index".into()))
+     }
+ 
+     fn check_turn(&self, player_index: usize) -> Result<(), EngineError> {
+-        if self.phase != "bidding" {
+-            return Err(EngineError::invalid(format!(
+-                "游戏阶段是 {}，不能行动",
+-                self.phase
+-            )));
+-        }
+-        let Some(player) = self.players.get(player_index) else {
+-            return Err(EngineError::NotFound(player_index.to_string()));
+-        };
+-        if !player.alive {
+-            return Err(EngineError::invalid(format!(
+-                "玩家 {player_index} 已出局，不能行动"
+-            )));
+-        }
+-        if player_index != self.current_turn {
+-            return Err(EngineError::invalid(format!(
+-                "还没轮到你（当前是玩家 {}）",
+-                self.current_turn
+-            )));
+-        }
+-        Ok(())
++        Ok(()) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 校验叫数本身是否合法——与"必须比上家大"是两回事。
+     fn validate_bid_values(&self, quantity: i64, face: i64) -> Result<(), EngineError> {
+         if quantity < 1 {
+             return Err(EngineError::invalid(format!(
+                 "叫数数量必须是 ≥ 1 的整数，收到: {quantity}"
+             )));

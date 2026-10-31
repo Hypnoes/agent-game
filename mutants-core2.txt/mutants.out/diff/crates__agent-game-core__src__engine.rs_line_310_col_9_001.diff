@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/engine.rs
++++ replace GameEngine::is_finished -> bool with false
+@@ -302,17 +302,17 @@
+         DEFAULT_SENSITIVE_KEYS
+     }
+ 
+     /// 当前状态名（`waiting` / `bidding` / `finished` / `won` / `lost` …）。
+     fn phase(&self) -> &'static str;
+ 
+     /// 对局是否已结束。
+     fn is_finished(&self) -> bool {
+-        self.finished_states().contains(&self.phase())
++        false /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// admin 视图：含全部秘密信息，只有鉴权通过的 admin 出口能拿到。
+     fn admin_view(&self) -> Value;
+ 
+     /// 公开视图：**由构造保证**不含敏感字段。
+     fn public_view(&self) -> Value;
+ 

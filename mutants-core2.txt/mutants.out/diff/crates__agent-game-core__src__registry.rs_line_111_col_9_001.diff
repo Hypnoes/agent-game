@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/registry.rs
++++ replace Registry::game_types -> Vec<&'static str> with vec![""]
+@@ -103,17 +103,17 @@
+     #[must_use]
+     pub fn is_empty(&self) -> bool {
+         self.games.is_empty()
+     }
+ 
+     /// 所有机器键（`/health` 用）。
+     #[must_use]
+     pub fn game_types(&self) -> Vec<&'static str> {
+-        self.games.keys().copied().collect()
++        vec![""] /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 按已注册的 `game_type` 前缀最长优先剥离，得到 `(game_type, action)`。
+     ///
+     /// 最短优先会在同时注册 `guess` 与 `guess_number` 时把 `guess_number_state`
+     /// 判给 `guess`。未注册的前缀一律返回 `None`，不拿拼错的工具名去建对局。
+     #[must_use]
+     pub fn split_tool_name<'a>(&self, tool_name: &'a str) -> Option<(&'static str, &'a str)> {

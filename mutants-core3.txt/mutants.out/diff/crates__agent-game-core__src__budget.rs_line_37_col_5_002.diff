@@ -1,0 +1,26 @@
+--- crates/agent-game-core/src/budget.rs
++++ replace resolve_budget -> Result<f64, BudgetError> with Ok(-1.0)
+@@ -29,22 +29,17 @@
+ ///
+ /// # Errors
+ /// 传入既不是"省略"也不是有限数字时返回 [`BudgetError`]。
+ pub fn resolve_budget(
+     raw: Option<&Value>,
+     default: Option<f64>,
+     cap: f64,
+ ) -> Result<f64, BudgetError> {
+-    let cap = sanitize_cap(cap);
+-    let budget = match raw {
+-        None | Some(Value::Null) => default.unwrap_or(cap),
+-        Some(value) => to_finite(value)?,
+-    };
+-    Ok(budget.clamp(0.0, cap))
++    Ok(-1.0) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// 上限本身若是负数或 NaN（配置写错了），按 0 处理，避免 `clamp` panic。
+ fn sanitize_cap(cap: f64) -> f64 {
+     if cap.is_finite() && cap > 0.0 {
+         cap
+     } else {
+         0.0

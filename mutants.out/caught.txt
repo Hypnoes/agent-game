@@ -1,0 +1,5 @@
+crates/agent-game-core/src/signal.rs:45:9: replace Subscription::has_changed -> bool with false
+crates/agent-game-core/src/signal.rs:51:9: replace <impl Drop for Subscription>::drop with ()
+crates/agent-game-core/src/signal.rs:92:9: replace ChangeSignal::notify with ()
+crates/agent-game-core/src/signal.rs:128:9: replace ChangeSignal::waiter_count -> usize with 0
+crates/agent-game-core/src/signal.rs:128:9: replace ChangeSignal::waiter_count -> usize with 1

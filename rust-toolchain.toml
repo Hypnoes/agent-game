@@ -1,0 +1,11 @@
+# 工具链：不写 channel。
+#
+# 这里刻意**不指定 channel**，只声明需要的组件。原因是一次实测事故：写
+# channel = "1.98" 而本机装的是 1.98.1 时，rustup 判定需要一个"新"的 toolchain
+# 并开始下载 8 个组件（含 500MB 级的 rust-docs），两个并发 rustup 进程还会互相
+# 破坏同一个目录（日志里的 "recovering from a partially installed toolchain"）。
+#
+# 结论：把"需要哪些组件"交给仓库，把"用哪个具体版本"交给机器。
+[toolchain]
+components = ["rustfmt", "clippy", "llvm-tools-preview"]
+profile = "minimal"

@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/testing.rs
++++ replace && with || in <impl GameEngine for DummyEngine>::check_timeout
+@@ -121,17 +121,17 @@
+             other => Err(EngineError::UnknownAction(other.to_owned())),
+         }
+     }
+ 
+     fn check_timeout(&mut self, _now: Instant) -> Result<Option<TimeoutEvent>, EngineError> {
+         if self.explode {
+             return Err(EngineError::Internal("boom".to_owned()));
+         }
+-        if self.finish_on_timeout && self.phase != "finished" {
++        if self.finish_on_timeout || /* ~ changed by cargo-mutants ~ */ self.phase != "finished" {
+             self.phase = "finished";
+             self.signal.notify();
+             return Ok(Some(TimeoutEvent::turn_timeout(0)));
+         }
+         Ok(None)
+     }
+ 
+     fn signal(&self) -> Arc<ChangeSignal> {

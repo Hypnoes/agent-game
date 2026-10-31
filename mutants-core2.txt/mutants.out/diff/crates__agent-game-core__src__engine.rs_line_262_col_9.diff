@@ -1,0 +1,25 @@
+--- crates/agent-game-core/src/engine.rs
++++ replace TimeoutEvent::session_timeout -> Self with Default::default()
+@@ -254,21 +254,17 @@
+             kind: "lobby_timeout",
+             expired: true,
+             loser: None,
+         }
+     }
+ 
+     #[must_use]
+     pub fn session_timeout() -> Self {
+-        Self {
+-            kind: "session_timeout",
+-            expired: true,
+-            loser: None,
+-        }
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     #[must_use]
+     pub fn to_json(&self) -> Value {
+         let mut object = serde_json::Map::new();
+         object.insert("type".to_owned(), Value::String(self.kind.to_owned()));
+         if self.expired {
+             object.insert("expired".to_owned(), Value::Bool(true));

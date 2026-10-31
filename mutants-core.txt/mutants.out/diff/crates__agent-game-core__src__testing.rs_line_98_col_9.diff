@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/testing.rs
++++ replace <impl GameEngine for DummyEngine>::public_view -> Value with Default::default()
+@@ -90,17 +90,17 @@
+         self.phase
+     }
+ 
+     fn admin_view(&self) -> Value {
+         serde_json::json!({"phase": self.phase, "secret": "admin-only"})
+     }
+ 
+     fn public_view(&self) -> Value {
+-        serde_json::json!({"phase": self.phase})
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn player_view(&self, _player_index: Option<usize>) -> Result<PlayerView, EngineError> {
+         Ok(PlayerView {
+             public: self.public_view(),
+             private: serde_json::json!({}),
+             prompt: format!("{}:{}", self.game_type, self.phase),
+         })

@@ -1,0 +1,28 @@
+--- crates/agent-game-core/src/engine.rs
++++ replace CreateParams::get_i64 -> Result<Option<i64>, String> with Ok(Some(1))
+@@ -61,24 +61,17 @@
+         self.raw.get(key)
+     }
+ 
+     /// 取一个整数参数。
+     ///
+     /// # Errors
+     /// 键存在但不是整数（`bool` 不被当作整数）。
+     pub fn get_i64(&self, key: &str) -> Result<Option<i64>, String> {
+-        match self.raw.get(key) {
+-            None => Ok(None),
+-            Some(Value::Number(number)) => number
+-                .as_i64()
+-                .map(Some)
+-                .ok_or_else(|| format!("{key} 必须是整数，收到 {number}")),
+-            Some(other) => Err(format!("{key} 必须是整数，收到 {other}")),
+-        }
++        Ok(Some(1)) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 取一个字符串参数。
+     ///
+     /// # Errors
+     /// 键存在但不是字符串。
+     pub fn get_str(&self, key: &str) -> Result<Option<&str>, String> {
+         match self.raw.get(key) {

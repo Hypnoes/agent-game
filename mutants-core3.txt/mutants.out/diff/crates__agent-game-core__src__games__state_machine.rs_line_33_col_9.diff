@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/state_machine.rs
++++ replace Transitions::can_transition -> bool with true
+@@ -25,17 +25,17 @@
+             .iter()
+             .find(|(state, _)| *state == from)
+             .map(|(_, targets)| targets.clone())
+             .unwrap_or_default()
+     }
+ 
+     #[must_use]
+     pub fn can_transition(&self, from: &str, to: &str) -> bool {
+-        self.allowed_from(from).contains(&to)
++        true /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 校验一次转移。
+     ///
+     /// # Errors
+     /// 目标不在 `from` 的允许列表里。
+     pub fn check(&self, from: &'static str, to: &'static str) -> Result<(), EngineError> {
+         if self.can_transition(from, to) {

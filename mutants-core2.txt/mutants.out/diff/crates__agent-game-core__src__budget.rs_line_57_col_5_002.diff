@@ -1,0 +1,27 @@
+--- crates/agent-game-core/src/budget.rs
++++ replace to_finite -> Result<f64, BudgetError> with Ok(-1.0)
+@@ -49,23 +49,17 @@
+     } else {
+         0.0
+     }
+ }
+ 
+ fn to_finite(value: &Value) -> Result<f64, BudgetError> {
+     // `as_f64` 对 bool / 字符串 / 数组 / 对象都返回 None：Python 里 bool 是 int
+     // 的子类，`timeout=true` 会静默变成 1 秒；serde_json 的类型区分让它不可能发生。
+-    let Some(number) = value.as_f64() else {
+-        return Err(BudgetError::NotNumeric(describe(value)));
+-    };
+-    if !number.is_finite() {
+-        return Err(BudgetError::NotFinite(describe(value)));
+-    }
+-    Ok(number)
++    Ok(-1.0) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// `NaN` / `±inf` 不是合法 JSON，但 `serde_json::Value` 也装不下它们；
+ /// 真正会走到这里的是经 `json!` 构造出来的极端值，用 Debug 形式报告即可。
+ fn describe(value: &Value) -> String {
+     let text = value.to_string();
+     if text.chars().count() > 40 {
+         format!("{}…", text.chars().take(40).collect::<String>())

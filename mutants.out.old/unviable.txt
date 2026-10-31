@@ -1,0 +1,3 @@
+crates/agent-game-core/src/signal.rs:80:9: replace ChangeSignal::subscribe -> Subscription with Default::default()
+crates/agent-game-core/src/signal.rs:102:9: replace ChangeSignal::wait -> WaitOutcome with Default::default()
+crates/agent-game-core/src/signal.rs:121:9: replace ChangeSignal::wait_until -> WaitOutcome with Default::default()

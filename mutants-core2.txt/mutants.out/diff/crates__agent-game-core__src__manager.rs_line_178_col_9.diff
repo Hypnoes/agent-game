@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/manager.rs
++++ replace GameManager::registry -> &Registry with Box::leak(Box::new(Default::default()))
+@@ -170,17 +170,17 @@
+ 
+     #[must_use]
+     pub fn config(&self) -> &Config {
+         &self.config
+     }
+ 
+     #[must_use]
+     pub fn registry(&self) -> &Registry {
+-        &self.registry
++        Box::leak(Box::new(Default::default())) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 当前对局数量（测试与 `/health` 用）。
+     #[must_use]
+     pub fn len(&self) -> usize {
+         self.sessions.read().map_or(0, |map| map.len())
+     }
+ 

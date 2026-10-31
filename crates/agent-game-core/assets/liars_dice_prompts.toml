@@ -1,0 +1,47 @@
+# 大话骰提示词 —— 改这个文件然后 POST /api/v1/admin/prompts/reload 即可生效，不用重启。
+#
+# 这里的两条时间轴不能混：
+# - `wait_budget`：一次 `state` 调用最多在服务端挂起多久，到点就返回文本。
+# - `turn_timeout`：当前回合多久不行动判负。
+#
+# 模板里一个具体秒数都不写死：同一份 `not_your_turn` 既会被"真的等满了预算"
+# 渲染，也会被 `GET .../players/{idx}` 这种一秒都没等、立刻返回的路径渲染。
+
+[templates]
+finished = """
+🏆 游戏结束！{winner} 获胜！
+全场骰子: {all_dice}
+叫数历史: {call_history}
+
+要再来一局吗？调用 liars_dice_join 重新匹配。"""
+
+waiting = """
+🎲 已加入匹配队列！当前 {players}/{needed} 人
+⏳ 等待对手加入…已等待 {waited} 秒（匹配超时: 120 秒）
+**不要重启 MCP 或重新加入** — 服务器自动匹配，放弃只会让你失去位置。
+本次 liars_dice_state 已在服务端挂起等待，最多阻塞 {wait_budget:g} 秒：对手加入或匹配超时会立刻返回，否则 {wait_budget:g} 秒后返回上面这段提示。再次调用会继续挂起，不必自己估算时间。"""
+
+not_your_turn = """
+⏳ 等待 {current_player} 行动中…({progress}){patience}
+当前叫数: {call_str}
+你的骰子: {dice}
+
+⌛ 对手的回合已经进行了 {elapsed} 秒，仍未行动。**这不是出错，是正常的等待。**
+你的 state 调用在服务端最多挂起 {wait_budget:g} 秒：对手在这段时间内行动就立刻返回，否则挂满 {wait_budget:g} 秒后返回这段提示。连续调用不会让对手更快出手。"""
+
+your_turn = """
+🎲 **轮到你了！这是你的回合，必须立即行动。**{msg_line}
+你的骰子: {dice}
+当前叫数: {call_str}
+⏱ 剩余 {remaining} 秒（超时自动判负）
+
+**行动（选一个调用，必须带 player_token）：**
+  liars_dice_bid(player_index={player_index}, player_token='<你的token>', quantity=N, face=F, message="?")  — 加码
+  liars_dice_challenge(player_index={player_index}, player_token='<你的token>')  — 开盅
+
+💡 叫数必须比上家大。1 是百搭。叫 1 时 1 只算 1。
+⚠️ 再调 liars_dice_state 不会改变局面，只会浪费你的回合时间。"""
+
+patience_20 = "😤 对手还在思考——这是正常的。回合上限 {turn_timeout:g} 秒，别急。"
+
+patience_40 = "⏰ 对手的回合倒计时只剩 {remaining_time} 秒了。如果超时对手自动判负，耐心等就好。"

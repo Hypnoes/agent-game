@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/engine.rs
++++ replace ActionParams::get -> Option<&Value> with None
+@@ -112,17 +112,17 @@
+ impl ActionParams {
+     #[must_use]
+     pub fn new(raw: serde_json::Map<String, Value>) -> Self {
+         Self { raw }
+     }
+ 
+     #[must_use]
+     pub fn get(&self, key: &str) -> Option<&Value> {
+-        self.raw.get(key)
++        None /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 取必填整数。
+     ///
+     /// # Errors
+     /// 缺失、或不是整数。
+     pub fn require_i64(&self, key: &str) -> Result<i64, EngineError> {
+         match self.raw.get(key) {

@@ -1,0 +1,52 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace <impl GameEngine for LiarsDiceEngine>::check_timeout -> Result<Option<TimeoutEvent>, EngineError> with Ok(None)
+@@ -835,48 +835,17 @@
+                 self.player_view(Some(index))
+             }
+             other => Err(EngineError::UnknownAction(other.to_owned())),
+         }
+     }
+ 
+     fn check_timeout(&mut self, now: Instant) -> Result<Option<TimeoutEvent>, EngineError> {
+         // 匹配超时
+-        if self.phase == "waiting"
+-            && now.saturating_duration_since(self.last_action) > LOBBY_TIMEOUT
+-        {
+-            self.signal.notify();
+-            return Ok(Some(TimeoutEvent::lobby_timeout()));
+-        }
+-
+-        // 回合超时：超时者按"输掉本轮"处理（掉骰/出局），而不是让下家白捡一局。
+-        // 回合必须交出去，否则超时者会立刻再次超时，对局永远卡住。
+-        if self.phase == "bidding"
+-            && now.saturating_duration_since(self.last_action) > self.turn_timeout
+-        {
+-            let loser = self.current_turn;
+-            self.loser = Some(loser);
+-            self.last_action = now;
+-
+-            // 超时与开盅同样是"输掉本轮"：本轮叫数必须清零。留着上一手的叫数，
+-            // 下家既不能加码（可能已超过场上骰子总数）也不能弃权，只能替别人开盅。
+-            if self.current_call.is_some() {
+-                self.call_history
+-                    .push(Call::note(loser, "超时判负（本轮作废）".to_owned()));
+-            }
+-            self.current_call = None;
+-
+-            if !self.eliminate(loser) {
+-                self.current_turn = self.next_alive_index(loser);
+-            }
+-            // 判负同样要唤醒等待者，否则等待方要等满整个预算才知道对局已结束
+-            self.signal.notify();
+-            return Ok(Some(TimeoutEvent::turn_timeout(loser)));
+-        }
+-        Ok(None)
++        Ok(None) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn signal(&self) -> Arc<ChangeSignal> {
+         Arc::clone(&self.signal)
+     }
+ 
+     fn is_ready_for(&self, player_index: usize) -> bool {
+         // 等待条件：轮到我了，或对局已经结束。

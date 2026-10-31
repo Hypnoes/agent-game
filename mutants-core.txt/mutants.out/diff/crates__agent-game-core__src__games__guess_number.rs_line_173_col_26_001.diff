@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace match guard self.max <= self.min with false in GuessNumberEngine::roll_target
+@@ -165,17 +165,17 @@
+     }
+ 
+     /// 摇一个新答案。范围里还有别的数时保证换一个（不重复上一局）。
+     fn roll_target(&mut self, previous: Option<i64>) {
+         let mut rng = rand::rng();
+         match previous {
+             None if self.max <= self.min => self.target = rng.random_range(self.min..=self.max),
+             None => self.target = rng.random_range(self.min..=self.max),
+-            Some(old) if self.max <= self.min => self.target = old,
++            Some(old) if false /* ~ changed by cargo-mutants ~ */ => self.target = old,
+             Some(old) => {
+                 // 至少有两个候选，循环必然终止
+                 self.target = loop {
+                     let candidate = rng.random_range(self.min..=self.max);
+                     if candidate != old {
+                         break candidate;
+                     }
+                 };

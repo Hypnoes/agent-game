@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace LiarsDiceEngine::turn_timeout -> Duration with Default::default()
+@@ -227,17 +227,17 @@
+ 
+     #[must_use]
+     pub fn loser(&self) -> Option<usize> {
+         self.loser
+     }
+ 
+     #[must_use]
+     pub fn turn_timeout(&self) -> Duration {
+-        self.turn_timeout
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 场上仍在使用的骰子总数。
+     #[must_use]
+     pub fn total_dice(&self) -> i64 {
+         self.players
+             .iter()
+             .filter(|player| player.alive)

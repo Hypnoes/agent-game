@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace == with != in LiarsDiceEngine::challenge
+@@ -462,17 +462,17 @@
+         Ok(())
+     }
+ 
+     fn challenge(&mut self, player_index: usize) -> Result<(), EngineError> {
+         self.check_turn(player_index)?;
+         let Some(call) = self.current_call.clone() else {
+             return Err(EngineError::invalid("没有可开的叫数"));
+         };
+-        if player_index == call.player_idx {
++        if player_index != /* ~ changed by cargo-mutants ~ */ call.player_idx {
+             return Err(EngineError::invalid("不能开自己的盅"));
+         }
+ 
+         let actual = self.count_face(call.face);
+         let loser = if actual >= call.quantity {
+             player_index
+         } else {
+             call.player_idx

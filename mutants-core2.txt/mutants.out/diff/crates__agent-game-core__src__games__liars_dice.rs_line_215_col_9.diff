@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace LiarsDiceEngine::current_call -> Option<&Call> with None
+@@ -207,17 +207,17 @@
+     pub fn set_current_turn(&mut self, player_index: usize) {
+         if player_index < self.players.len() {
+             self.current_turn = player_index;
+         }
+     }
+ 
+     #[must_use]
+     pub fn current_call(&self) -> Option<&Call> {
+-        self.current_call.as_ref()
++        None /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     #[must_use]
+     pub fn call_history(&self) -> &[Call] {
+         &self.call_history
+     }
+ 
+     #[must_use]

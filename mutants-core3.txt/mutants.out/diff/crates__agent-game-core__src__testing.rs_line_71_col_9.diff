@@ -1,0 +1,22 @@
+--- crates/agent-game-core/src/testing.rs
++++ replace DummyEngine::finishing_on_timeout -> Self with Default::default()
+@@ -63,18 +63,17 @@
+     pub fn exploding(mut self) -> Self {
+         self.explode = true;
+         self
+     }
+ 
+     /// 一次 `check_timeout` 之后进入 `finished`，用于验证保留期回收。
+     #[must_use]
+     pub fn finishing_on_timeout(mut self) -> Self {
+-        self.finish_on_timeout = true;
+-        self
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ impl GameEngine for DummyEngine {
+     fn game_type(&self) -> &'static str {
+         self.game_type
+     }
+ 

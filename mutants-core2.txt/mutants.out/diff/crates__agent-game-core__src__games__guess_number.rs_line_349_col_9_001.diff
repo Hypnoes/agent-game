@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace <impl GameEngine for GuessNumberEngine>::sensitive_keys -> &'static[&'static str] with Vec::leak(vec![""])
+@@ -341,17 +341,17 @@
+     }
+ 
+     fn finished_states(&self) -> &'static [&'static str] {
+         // 只用 won / lost：这条声明验证"终结态名由引擎自己定"这个能力。
+         &["won", "lost"]
+     }
+ 
+     fn sensitive_keys(&self) -> &'static [&'static str] {
+-        &["target"]
++        Vec::leak(vec![""]) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn phase(&self) -> &'static str {
+         self.phase
+     }
+ 
+     fn admin_view(&self) -> Value {
+         serde_json::json!({

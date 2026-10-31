@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace > with == in LiarsDiceEngine::validate_bid_values
+@@ -345,17 +345,17 @@
+             )));
+         }
+         if !(1..=6).contains(&face) {
+             return Err(EngineError::invalid(format!(
+                 "面值必须是 1-6 的整数，收到: {face}"
+             )));
+         }
+         let total = self.total_dice();
+-        if quantity > total {
++        if quantity == /* ~ changed by cargo-mutants ~ */ total {
+             return Err(EngineError::invalid(format!(
+                 "叫数 {quantity} 超过场上骰子总数 {total}，这样的叫数永远开不赢"
+             )));
+         }
+         Ok(())
+     }
+ 
+     /// 新叫数是否比上一手大。

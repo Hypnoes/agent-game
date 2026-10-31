@@ -1,0 +1,26 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace LiarsDiceEngine::alive_indices -> Vec<usize> with vec![1]
+@@ -253,22 +253,17 @@
+             .flat_map(|player| player.dice.iter())
+             .filter(|die| **die == face || (**die == 1 && face != 1))
+             .count()
+             .try_into()
+             .unwrap_or(i64::MAX)
+     }
+ 
+     fn alive_indices(&self) -> Vec<usize> {
+-        self.players
+-            .iter()
+-            .enumerate()
+-            .filter(|(_, player)| player.alive)
+-            .map(|(index, _)| index)
+-            .collect()
++        vec![1] /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 从 `player_index` 往后找下一位存活玩家（跳过出局者，绕一圈）。
+     fn next_alive_index(&self, player_index: usize) -> usize {
+         let count = self.players.len();
+         if count == 0 {
+             return 0;
+         }

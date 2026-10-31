@@ -1,0 +1,25 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace GuessResult::hint -> &'static str with ""
+@@ -44,21 +44,17 @@
+         match self {
+             Self::TooLow => "too_low",
+             Self::TooHigh => "too_high",
+             Self::Correct => "correct",
+         }
+     }
+ 
+     fn hint(self) -> &'static str {
+-        match self {
+-            Self::TooLow => "太低 ↑",
+-            Self::TooHigh => "太高 ↓",
+-            Self::Correct => "对了",
+-        }
++        "" /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ /// 一条猜测记录。
+ #[derive(Clone, Debug)]
+ pub struct Guess {
+     pub number: i64,
+     pub result: GuessResult,

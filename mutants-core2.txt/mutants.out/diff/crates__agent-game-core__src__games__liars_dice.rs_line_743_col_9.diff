@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace <impl GameEngine for LiarsDiceEngine>::public_view -> Value with Default::default()
+@@ -735,17 +735,17 @@
+             );
+             map.insert("status".to_owned(), Value::String(self.phase.to_owned()));
+         }
+         view
+     }
+ 
+     fn public_view(&self) -> Value {
+         // 刻意不含 `all_dice`：公开视图是构造出来的，不是从 admin 视图删键。
+-        self.build_public_view()
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn player_view(&self, player_index: Option<usize>) -> Result<PlayerView, EngineError> {
+         let index = self.validate_index(player_index)?;
+         let mut private = serde_json::json!({
+             "your_dice": self.players[index].dice.clone(),
+             "your_index": index,
+         });

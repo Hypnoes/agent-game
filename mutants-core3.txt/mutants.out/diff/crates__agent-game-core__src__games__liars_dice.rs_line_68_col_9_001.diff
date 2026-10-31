@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace <impl crate::identity::PlayerIdentity for Player>::token -> &str with "xyzzy"
+@@ -60,17 +60,17 @@
+             dice: Vec::new(),
+             alive: true,
+         }
+     }
+ }
+ 
+ impl crate::identity::PlayerIdentity for Player {
+     fn token(&self) -> &str {
+-        &self.token
++        "xyzzy" /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ /// 一次叫数。
+ #[derive(Clone, Debug, PartialEq, Eq)]
+ pub struct Call {
+     pub player_idx: usize,
+     pub quantity: i64,

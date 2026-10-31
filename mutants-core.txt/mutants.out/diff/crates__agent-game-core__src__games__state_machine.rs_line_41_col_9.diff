@@ -1,0 +1,28 @@
+--- crates/agent-game-core/src/games/state_machine.rs
++++ replace Transitions::check -> Result<(), EngineError> with Ok(())
+@@ -33,24 +33,17 @@
+         self.allowed_from(from).contains(&to)
+     }
+ 
+     /// 校验一次转移。
+     ///
+     /// # Errors
+     /// 目标不在 `from` 的允许列表里。
+     pub fn check(&self, from: &'static str, to: &'static str) -> Result<(), EngineError> {
+-        if self.can_transition(from, to) {
+-            Ok(())
+-        } else {
+-            Err(EngineError::invalid(format!(
+-                "状态机不能从 '{from}' 转到 '{to}'。允许: {:?}",
+-                self.allowed_from(from)
+-            )))
+-        }
++        Ok(()) /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+ 
+     fn guess() -> Transitions {

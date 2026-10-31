@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace <impl GameEngine for GuessNumberEngine>::player_mode -> PlayerMode with Default::default()
+@@ -332,17 +332,17 @@
+ }
+ 
+ impl GameEngine for GuessNumberEngine {
+     fn game_type(&self) -> &'static str {
+         self.game_type
+     }
+ 
+     fn player_mode(&self) -> PlayerMode {
+-        PlayerMode::Single
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn finished_states(&self) -> &'static [&'static str] {
+         // 只用 won / lost：这条声明验证"终结态名由引擎自己定"这个能力。
+         &["won", "lost"]
+     }
+ 
+     fn sensitive_keys(&self) -> &'static [&'static str] {

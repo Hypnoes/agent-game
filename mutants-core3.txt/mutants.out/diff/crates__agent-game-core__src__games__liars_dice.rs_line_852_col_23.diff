@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace == with != in <impl GameEngine for LiarsDiceEngine>::check_timeout
+@@ -844,17 +844,17 @@
+             && now.saturating_duration_since(self.last_action) > LOBBY_TIMEOUT
+         {
+             self.signal.notify();
+             return Ok(Some(TimeoutEvent::lobby_timeout()));
+         }
+ 
+         // 回合超时：超时者按"输掉本轮"处理（掉骰/出局），而不是让下家白捡一局。
+         // 回合必须交出去，否则超时者会立刻再次超时，对局永远卡住。
+-        if self.phase == "bidding"
++        if self.phase != /* ~ changed by cargo-mutants ~ */ "bidding"
+             && now.saturating_duration_since(self.last_action) > self.turn_timeout
+         {
+             let loser = self.current_turn;
+             self.loser = Some(loser);
+             self.last_action = now;
+ 
+             // 超时与开盅同样是"输掉本轮"：本轮叫数必须清零。留着上一手的叫数，
+             // 下家既不能加码（可能已超过场上骰子总数）也不能弃权，只能替别人开盅。

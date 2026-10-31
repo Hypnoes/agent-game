@@ -1,0 +1,35 @@
+--- crates/agent-game-core/src/manager.rs
++++ replace GameManager::snapshots -> Vec<SessionSnapshot> with vec![]
+@@ -297,31 +297,17 @@
+         self.sessions
+             .read()
+             .map(|map| map.values().cloned().collect())
+             .unwrap_or_default()
+     }
+ 
+     /// 全部 session 的 admin 快照。
+     pub async fn snapshots(&self) -> Vec<SessionSnapshot> {
+-        let sessions = self.session_list();
+-        let mut rows = Vec::with_capacity(sessions.len());
+-        for session in sessions {
+-            let engine = session.engine.lock().await;
+-            let state = engine.admin_view();
+-            drop(engine);
+-            rows.push(SessionSnapshot {
+-                session_id: session.id.clone(),
+-                game_type: session.game_type,
+-                display_name: session.display_name,
+-                created_at_ms: (session.created_at - self.started).as_millis(),
+-                state,
+-            });
+-        }
+-        rows
++        vec![] /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 全部 session 的指纹：序列化后用于"状态真的变了吗"的判断。
+     ///
+     /// `Value` 序列化失败会返回 `None`（比如引擎塞了会 panic 的 `Debug` 实现），
+     /// 由调用方决定强制广播——一次序列化失败不能把轮询循环打死。
+     pub async fn state_signature(&self) -> Option<String> {
+         let rows: Vec<Value> = self

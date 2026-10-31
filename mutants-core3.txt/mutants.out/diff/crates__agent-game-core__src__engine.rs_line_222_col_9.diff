@@ -1,0 +1,25 @@
+--- crates/agent-game-core/src/engine.rs
++++ replace PlayerView::to_json -> Value with Default::default()
+@@ -214,21 +214,17 @@
+     pub public: Value,
+     pub private: Value,
+     pub prompt: String,
+ }
+ 
+ impl PlayerView {
+     #[must_use]
+     pub fn to_json(&self) -> Value {
+-        serde_json::json!({
+-            "public": self.public,
+-            "private": self.private,
+-            "prompt": self.prompt,
+-        })
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ /// 超时结算产生的事件。
+ #[derive(Clone, Debug, PartialEq, Eq)]
+ pub struct TimeoutEvent {
+     /// 事件类型：`turn_timeout` / `lobby_timeout` / `session_timeout`。
+     pub kind: &'static str,

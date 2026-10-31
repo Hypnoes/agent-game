@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace > with >= in <impl GameEngine for GuessNumberEngine>::check_timeout
+@@ -428,17 +428,17 @@
+             }
+             "state" => self.player_view(None),
+             other => Err(EngineError::UnknownAction(other.to_owned())),
+         }
+     }
+ 
+     fn check_timeout(&mut self, now: Instant) -> Result<Option<TimeoutEvent>, EngineError> {
+         if self.phase == "in_progress"
+-            && now.saturating_duration_since(self.last_action) > IDLE_TIMEOUT
++            && now.saturating_duration_since(self.last_action) >= /* ~ changed by cargo-mutants ~ */ IDLE_TIMEOUT
+         {
+             let elapsed = now.saturating_duration_since(self.started_at).as_millis();
+             self.phase = "lost";
+             self.ended_at_ms = Some(elapsed);
+             self.signal.notify();
+             return Ok(Some(TimeoutEvent::session_timeout()));
+         }
+         Ok(None)

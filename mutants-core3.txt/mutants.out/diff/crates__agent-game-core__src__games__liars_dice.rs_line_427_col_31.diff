@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace >= with < in LiarsDiceEngine::add_player
+@@ -419,17 +419,17 @@
+             )));
+         }
+ 
+         let token = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();
+         let index = self.players.len();
+         self.players.push(Player::new(name, token));
+         self.last_action = Instant::now();
+ 
+-        if self.players.len() >= self.player_count {
++        if self.players.len() < /* ~ changed by cargo-mutants ~ */ self.player_count {
+             self.start_game();
+         } else {
+             // 人还没满，同样是一次状态变更：大厅里等待的玩家要看到人数变化
+             self.signal.notify();
+         }
+         Ok(index)
+     }
+ 

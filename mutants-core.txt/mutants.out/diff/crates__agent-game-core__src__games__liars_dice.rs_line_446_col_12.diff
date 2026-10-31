@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ delete ! in LiarsDiceEngine::make_bid
+@@ -438,17 +438,17 @@
+         player_index: usize,
+         quantity: i64,
+         face: i64,
+         message: String,
+     ) -> Result<(), EngineError> {
+         self.check_turn(player_index)?;
+         self.validate_bid_values(quantity, face)?;
+ 
+-        if !Self::is_valid_bid(self.current_call.as_ref(), quantity, face) {
++        if  /* ~ changed by cargo-mutants ~ */Self::is_valid_bid(self.current_call.as_ref(), quantity, face) {
+             let (prev_quantity, prev_face) = self
+                 .current_call
+                 .as_ref()
+                 .map_or((0, 0), |call| (call.quantity, call.face));
+             return Err(EngineError::invalid(format!(
+                 "叫数必须比上家大。当前: {prev_quantity}×{prev_face} → 你叫: {quantity}×{face}"
+             )));
+         }

@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace == with != in LiarsDiceEngine::count_face
+@@ -246,17 +246,17 @@
+     }
+ 
+     /// 统计全场满足 `face` 的骰子数。1 是百搭：叫非 1 时把 1 也算进来。
+     #[must_use]
+     pub fn count_face(&self, face: i64) -> i64 {
+         self.players
+             .iter()
+             .flat_map(|player| player.dice.iter())
+-            .filter(|die| **die == face || (**die == 1 && face != 1))
++            .filter(|die| **die == face || (**die != /* ~ changed by cargo-mutants ~ */ 1 && face != 1))
+             .count()
+             .try_into()
+             .unwrap_or(i64::MAX)
+     }
+ 
+     fn alive_indices(&self) -> Vec<usize> {
+         self.players
+             .iter()

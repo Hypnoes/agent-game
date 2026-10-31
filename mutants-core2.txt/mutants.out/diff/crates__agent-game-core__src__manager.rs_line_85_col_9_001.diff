@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/manager.rs
++++ replace Session::finished_at -> Option<Instant> with Some(Default::default())
+@@ -77,17 +77,17 @@
+     }
+ 
+     /// 标记引擎已毒化。
+     pub fn poison(&self) {
+         self.poisoned.store(true, Ordering::SeqCst);
+     }
+ 
+     fn finished_at(&self) -> Option<Instant> {
+-        self.finished_at.lock().ok().and_then(|guard| *guard)
++        Some(Default::default()) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn set_finished_at(&self, value: Option<Instant>) {
+         if let Ok(mut guard) = self.finished_at.lock() {
+             *guard = value;
+         }
+     }
+ }

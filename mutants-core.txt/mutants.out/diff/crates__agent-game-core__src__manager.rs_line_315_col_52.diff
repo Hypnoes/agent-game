@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/manager.rs
++++ replace - with + in GameManager::snapshots
+@@ -307,17 +307,17 @@
+         for session in sessions {
+             let engine = session.engine.lock().await;
+             let state = engine.admin_view();
+             drop(engine);
+             rows.push(SessionSnapshot {
+                 session_id: session.id.clone(),
+                 game_type: session.game_type,
+                 display_name: session.display_name,
+-                created_at_ms: (session.created_at - self.started).as_millis(),
++                created_at_ms: (session.created_at + /* ~ changed by cargo-mutants ~ */ self.started).as_millis(),
+                 state,
+             });
+         }
+         rows
+     }
+ 
+     /// 全部 session 的指纹：序列化后用于"状态真的变了吗"的判断。
+     ///

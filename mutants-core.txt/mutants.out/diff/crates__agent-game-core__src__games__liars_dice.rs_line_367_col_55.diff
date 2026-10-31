@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace / with % in LiarsDiceEngine::is_valid_bid
+@@ -359,17 +359,17 @@
+     }
+ 
+     /// 新叫数是否比上一手大。
+     fn is_valid_bid(previous: Option<&Call>, new_quantity: i64, new_face: i64) -> bool {
+         let Some(previous) = previous.filter(|call| call.is_bid()) else {
+             return true;
+         };
+         if new_face == 1 && previous.face != 1 {
+-            return new_quantity >= (previous.quantity / 2 + 1);
++            return new_quantity >= (previous.quantity % /* ~ changed by cargo-mutants ~ */ 2 + 1);
+         }
+         if new_face != 1 && previous.face == 1 {
+             return new_quantity >= previous.quantity * 2;
+         }
+         new_quantity > previous.quantity
+             || (new_quantity == previous.quantity && new_face > previous.face)
+     }
+ 

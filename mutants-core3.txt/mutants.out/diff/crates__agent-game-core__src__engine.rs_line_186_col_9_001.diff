@@ -1,0 +1,34 @@
+--- crates/agent-game-core/src/engine.rs
++++ replace ActionParams::player_index -> Result<Option<usize>, EngineError> with Ok(Some(0))
+@@ -178,30 +178,17 @@
+         }
+     }
+ 
+     /// 取玩家编号。多人动作必填，单人动作可省略。
+     ///
+     /// # Errors
+     /// 存在但不是非负整数。
+     pub fn player_index(&self) -> Result<Option<usize>, EngineError> {
+-        match self.raw.get("player_index") {
+-            None | Some(Value::Null) => Ok(None),
+-            Some(Value::Number(number)) => {
+-                let Some(value) = number.as_i64() else {
+-                    return Err(EngineError::InvalidIndex(number.to_string()));
+-                };
+-                if value < 0 {
+-                    // 负索引会绕回最后一名玩家，等于凭空拿到对手的骰子
+-                    return Err(EngineError::InvalidIndex(value.to_string()));
+-                }
+-                Ok(Some(usize::try_from(value).unwrap_or(usize::MAX)))
+-            }
+-            Some(other) => Err(EngineError::InvalidIndex(other.to_string())),
+-        }
++        Ok(Some(0)) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 取 `player_token`。
+     ///
+     /// # Errors
+     /// 存在但不是字符串。
+     pub fn player_token(&self) -> Result<Option<&str>, EngineError> {
+         self.optional_str("player_token")

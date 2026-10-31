@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/budget.rs
++++ replace > with == in describe
+@@ -62,17 +62,17 @@
+     }
+     Ok(number)
+ }
+ 
+ /// `NaN` / `±inf` 不是合法 JSON，但 `serde_json::Value` 也装不下它们；
+ /// 真正会走到这里的是经 `json!` 构造出来的极端值，用 Debug 形式报告即可。
+ fn describe(value: &Value) -> String {
+     let text = value.to_string();
+-    if text.chars().count() > 40 {
++    if text.chars().count() == /* ~ changed by cargo-mutants ~ */ 40 {
+         format!("{}…", text.chars().take(40).collect::<String>())
+     } else {
+         text
+     }
+ }
+ 
+ #[cfg(test)]
+ mod tests {

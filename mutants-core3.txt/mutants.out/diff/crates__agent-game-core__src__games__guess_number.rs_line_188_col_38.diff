@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace == with != in GuessNumberEngine::reset
+@@ -180,17 +180,17 @@
+                     }
+                 };
+             }
+         }
+     }
+ 
+     /// 重置成一局全新的游戏。配置（min/max/max_attempts）不变。
+     fn reset(&mut self) {
+-        let previous = if self.phase == "in_progress" {
++        let previous = if self.phase != /* ~ changed by cargo-mutants ~ */ "in_progress" {
+             None
+         } else {
+             Some(self.target)
+         };
+         self.phase = "in_progress";
+         self.roll_target(previous);
+         self.guesses.clear();
+         self.guess_count = 0;

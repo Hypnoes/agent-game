@@ -1,0 +1,25 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace LiarsDiceEngine::set_dice with ()
+@@ -187,21 +187,17 @@
+ 
+     /// 直接摆骰子：把全场骰子改成给定形状。
+     ///
+     /// 只给测试与诊断用。规则测试必须能构造"1 混在非 1 里"这类关键组合——
+     /// 只用随机开局采样，百搭分支可能一次都走不到（Python 版就是这样漏了它）。
+     /// 生产路径永远不调它，所以标 `#[doc(hidden)]` 而不是藏成私有。
+     #[doc(hidden)]
+     pub fn set_dice(&mut self, faces: Vec<Vec<i64>>) {
+-        if faces.len() == self.players.len() {
+-            for (player, dice) in self.players.iter_mut().zip(faces) {
+-                player.dice = dice;
+-            }
+-        }
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 直接指定当前回合的玩家。
+     ///
+     /// 同样只给测试用：胜负判定与百搭计数需要"让指定的人行动"，
+     /// 而先手是随机决定的。
+     #[doc(hidden)]
+     pub fn set_current_turn(&mut self, player_index: usize) {

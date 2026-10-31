@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/prompt.rs
++++ replace Templates::is_empty -> bool with false
+@@ -231,17 +231,17 @@
+ 
+     #[must_use]
+     pub fn len(&self) -> usize {
+         self.inner.len()
+     }
+ 
+     #[must_use]
+     pub fn is_empty(&self) -> bool {
+-        self.inner.is_empty()
++        false /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 某个模板声明的字段名（按出现顺序，已去重）。
+     pub fn placeholders(&self, name: &str) -> Vec<String> {
+         let Some(template) = self.get(name) else {
+             return Vec::new();
+         };
+         let Ok(segments) = parse(template) else {

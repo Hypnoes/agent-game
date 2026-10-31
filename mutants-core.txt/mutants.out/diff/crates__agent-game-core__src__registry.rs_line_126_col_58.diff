@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/registry.rs
++++ replace != with == in Registry::split_tool_name
+@@ -118,17 +118,17 @@
+     #[must_use]
+     pub fn split_tool_name<'a>(&self, tool_name: &'a str) -> Option<(&'static str, &'a str)> {
+         let mut best: Option<(&'static str, &str)> = None;
+         for game_type in self.games.keys() {
+             let prefix_len = game_type.len() + 1;
+             if tool_name.len() <= prefix_len || !tool_name.starts_with(game_type) {
+                 continue;
+             }
+-            if tool_name.as_bytes().get(game_type.len()) != Some(&b'_') {
++            if tool_name.as_bytes().get(game_type.len()) == /* ~ changed by cargo-mutants ~ */ Some(&b'_') {
+                 continue;
+             }
+             let action = &tool_name[prefix_len..];
+             let better = match best {
+                 None => true,
+                 Some((current, _)) => game_type.len() > current.len(),
+             };
+             if better {

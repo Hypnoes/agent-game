@@ -1,0 +1,23 @@
+--- crates/agent-game-core/src/manager.rs
++++ replace GameManager::remove with ()
+@@ -202,19 +202,17 @@
+         self.sessions
+             .read()
+             .ok()
+             .and_then(|map| map.get(session_id).cloned())
+     }
+ 
+     /// 移除一个 session。
+     pub fn remove(&self, session_id: &str) {
+-        if let Ok(mut map) = self.sessions.write() {
+-            map.remove(session_id);
+-        }
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 创建或复用一个 session。
+     ///
+     /// 复用顺序（与 Python 版一致）：
+     /// 1. 带 `player_token` 且命中某个**同类型、未结束**对局里的玩家 → 回到那一局。
+     /// 2. 多人游戏里有一个 `waiting` 且创建参数兼容的对局 → 加入那一桌。
+     /// 3. 否则新建。

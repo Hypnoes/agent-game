@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/prompt.rs
++++ replace <impl From<&str> for Value>::from -> Self with Default::default()
+@@ -66,17 +66,17 @@
+                 format!("[{}]", inner.join(", "))
+             }
+         }
+     }
+ }
+ 
+ impl From<&str> for Value {
+     fn from(text: &str) -> Self {
+-        Self::Str(text.to_owned())
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ impl From<String> for Value {
+     fn from(text: String) -> Self {
+         Self::Str(text)
+     }
+ }

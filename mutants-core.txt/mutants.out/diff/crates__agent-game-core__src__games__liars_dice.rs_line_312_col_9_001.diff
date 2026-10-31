@@ -1,0 +1,22 @@
+--- crates/agent-game-core/src/games/liars_dice.rs
++++ replace LiarsDiceEngine::validate_player -> Result<usize, EngineError> with Ok(1)
+@@ -304,18 +304,17 @@
+     ///
+     /// 校验本身在 [`crate::identity::check_player_identity`]——REST 与 MCP 两条
+     /// 传输共用同一份判断。这里只负责把"通过"翻译成可用的索引。
+     fn validate_player(
+         &self,
+         player_index: Option<usize>,
+         player_token: Option<&str>,
+     ) -> Result<usize, EngineError> {
+-        check_player_identity(Some(&self.players), player_index, player_token)?;
+-        player_index.ok_or_else(|| EngineError::InvalidIndex("缺少 player_index".into()))
++        Ok(1) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn check_turn(&self, player_index: usize) -> Result<(), EngineError> {
+         if self.phase != "bidding" {
+             return Err(EngineError::invalid(format!(
+                 "游戏阶段是 {}，不能行动",
+                 self.phase
+             )));

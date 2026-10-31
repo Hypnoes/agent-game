@@ -1,0 +1,22 @@
+--- crates/agent-game-core/src/signal.rs
++++ replace ChangeSignal::notify with ()
+@@ -84,18 +84,17 @@
+         }
+     }
+ 
+     /// 唤醒全部等待者。没有等待者时调用是安全的空操作。
+     pub fn notify(&self) {
+         // `send_modify` 只在所有 receiver 都被 drop 时才失败；那时没有等待者，
+         // 版本号也不必推进（下一个订阅者从当前版本开始，它不关心历史）。
+         // 没有等待者时它是一个安全的空操作，返回的 `()` 不需要处理。
+-        self.tx
+-            .send_modify(|version| *version = version.wrapping_add(1));
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 等待一次变更，最多 `budget`。
+     ///
+     /// 只等"版本号相对 `sub` 已经前进"这一个条件。收到变更返回
+     /// [`WaitOutcome::Ready`]，超时返回 [`WaitOutcome::Timeout`]。
+     /// **不判断"是不是轮到我"** —— 那是调用方循环要重复做的事。
+     pub async fn wait(&self, sub: &mut Subscription, budget: Duration) -> WaitOutcome {

@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/error.rs
++++ replace EngineError::is_client_error -> bool with true
+@@ -34,17 +34,17 @@
+     #[error("引擎内部错误: {0}")]
+     Internal(String),
+ }
+ 
+ impl EngineError {
+     /// 是否是调用方问题。`Internal` 之外都是。
+     #[must_use]
+     pub fn is_client_error(&self) -> bool {
+-        !matches!(self, Self::Internal(_))
++        true /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// 构造函数：非法输入。省得到处写 `EngineError::InvalidInput(format!(...))`。
+     pub fn invalid(message: impl Into<String>) -> Self {
+         Self::InvalidInput(message.into())
+     }
+ }
+ 

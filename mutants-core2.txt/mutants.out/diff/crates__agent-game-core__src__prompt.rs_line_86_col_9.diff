@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/prompt.rs
++++ replace <impl From<i64> for Value>::from -> Self with Default::default()
+@@ -78,17 +78,17 @@
+ impl From<String> for Value {
+     fn from(text: String) -> Self {
+         Self::Str(text)
+     }
+ }
+ 
+ impl From<i64> for Value {
+     fn from(number: i64) -> Self {
+-        Self::Int(number)
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ impl From<usize> for Value {
+     fn from(number: usize) -> Self {
+         Self::Int(i64::try_from(number).unwrap_or(i64::MAX))
+     }
+ }

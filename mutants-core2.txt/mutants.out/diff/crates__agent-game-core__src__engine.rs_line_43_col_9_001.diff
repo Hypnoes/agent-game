@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/engine.rs
++++ replace PlayerMode::is_multi -> bool with false
+@@ -35,17 +35,17 @@
+ pub enum PlayerMode {
+     Single,
+     Multi,
+ }
+ 
+ impl PlayerMode {
+     #[must_use]
+     pub fn is_multi(self) -> bool {
+-        matches!(self, Self::Multi)
++        false /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ /// 创建参数：请求体里的任意 JSON，由各引擎自己解释。
+ #[derive(Clone, Debug, Default)]
+ pub struct CreateParams {
+     pub raw: serde_json::Map<String, Value>,
+ }

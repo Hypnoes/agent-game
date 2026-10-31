@@ -1,0 +1,43 @@
+--- crates/agent-game-core/src/prompt.rs
++++ replace Value::render -> String with String::new()
+@@ -38,39 +38,17 @@
+     /// 二元组列表，渲染成 `[(3, 4), (4, 4)]`（叫数历史用）。
+     Pairs(Vec<(i64, i64)>),
+     /// 多组数值，渲染成 `[[1, 2], [3, 4]]`（结束时亮出全场骰子用）。
+     Groups(Vec<Vec<i64>>),
+ }
+ 
+ impl Value {
+     fn render(&self) -> String {
+-        match self {
+-            Self::Str(text) => text.clone(),
+-            Self::Int(number) => number.to_string(),
+-            Self::Float(number) => format_g(*number),
+-            Self::IntList(items) => {
+-                let inner: Vec<String> = items.iter().map(ToString::to_string).collect();
+-                format!("[{}]", inner.join(", "))
+-            }
+-            Self::Pairs(items) => {
+-                let inner: Vec<String> = items.iter().map(|(a, b)| format!("({a}, {b})")).collect();
+-                format!("[{}]", inner.join(", "))
+-            }
+-            Self::Groups(groups) => {
+-                let inner: Vec<String> = groups
+-                    .iter()
+-                    .map(|items| {
+-                        let dice: Vec<String> = items.iter().map(ToString::to_string).collect();
+-                        format!("[{}]", dice.join(", "))
+-                    })
+-                    .collect();
+-                format!("[{}]", inner.join(", "))
+-            }
+-        }
++        String::new() /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ impl From<&str> for Value {
+     fn from(text: &str) -> Self {
+         Self::Str(text.to_owned())
+     }
+ }

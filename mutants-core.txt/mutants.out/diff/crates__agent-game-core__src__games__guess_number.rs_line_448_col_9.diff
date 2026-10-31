@@ -1,0 +1,21 @@
+--- crates/agent-game-core/src/games/guess_number.rs
++++ replace <impl GameEngine for GuessNumberEngine>::signal -> Arc<ChangeSignal> with Arc::new(Default::default())
+@@ -440,17 +440,17 @@
+             self.ended_at_ms = Some(elapsed);
+             self.signal.notify();
+             return Ok(Some(TimeoutEvent::session_timeout()));
+         }
+         Ok(None)
+     }
+ 
+     fn signal(&self) -> Arc<ChangeSignal> {
+-        Arc::clone(&self.signal)
++        Arc::new(Default::default()) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn prompts(&self) -> &PromptStore {
+         self.prompts
+     }
+ 
+     fn setup_params(&self) -> CreateParams {
+         self.setup.clone()

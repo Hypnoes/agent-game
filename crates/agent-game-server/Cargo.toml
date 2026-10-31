@@ -1,0 +1,46 @@
+[package]
+name = "agent-game-server-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "agent-game 服务端：MCP 端点 + REST + Admin 同一个 axum app"
+
+[[bin]]
+name = "agent-game-server"
+path = "src/main.rs"
+
+[dependencies]
+agent-game-server-core.workspace = true
+rand_chacha.workspace = true
+agent-game-server-mcp.workspace = true
+axum.workspace = true
+clap.workspace = true
+futures.workspace = true
+rand.workspace = true
+rmcp = { workspace = true, features = [
+    "server",
+    "transport-streamable-http-server",
+    "transport-streamable-http-server-session",
+] }
+serde.workspace = true
+serde_json.workspace = true
+subtle.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal"] }
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "rt-multi-thread", "macros", "net"] }
+http-body-util = "0.1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+tower = { workspace = true, features = ["util"] }
+
+
+[lints]
+workspace = true
