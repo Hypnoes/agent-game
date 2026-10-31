@@ -287,7 +287,10 @@ impl GameManager {
         Ok(session)
     }
 
-    async fn is_finished(&self, session: &Arc<Session>) -> bool {
+    /// 对局是否已结束。
+    ///
+    /// 公开版本：传输层要判断"这局还能不能接受动作"，但不需要碰引擎内部。
+    pub async fn is_finished(&self, session: &Arc<Session>) -> bool {
         let engine = session.engine.lock().await;
         engine.is_finished()
     }
@@ -410,6 +413,10 @@ impl GameManager {
     ///
     /// 返回 `true` 表示这是第一次上报。顺带把缓存限制在有界范围内，
     /// 避免长期运行后无限增长（FIFO 淘汰）。
+    ///
+    /// 测试入口：[`Self::mark_expired_for_test`] —— 正常路径只能通过
+    /// `check_timeouts` 走到这里，而那条路径要求一个"会产生 expired 事件"
+    /// 的引擎，不好在单元测试里定点构造。
     fn mark_expired(&self, session_id: &str, kind: &'static str) -> bool {
         let Ok(mut seen) = self.seen_expired.lock() else {
             return true;
@@ -425,6 +432,22 @@ impl GameManager {
             seen.remove(0);
         }
         true
+    }
+
+    /// [`Self::mark_expired`] 的测试入口。
+    ///
+    /// 正常路径只能通过 `check_timeouts` 走到 `mark_expired`，而那条路径要求
+    /// 一个会产生 expired 事件的引擎。单元测试要验证"同一 (session, kind)
+    /// 只报一次"，直接调这个更清楚，也不必为此造一个假引擎。
+    #[doc(hidden)]
+    pub fn mark_expired_for_test(&self, session_id: &str, kind: &'static str) -> bool {
+        self.mark_expired(session_id, kind)
+    }
+
+    /// 已上报缓存当前的条目数（测试用，用来验证有界）。
+    #[doc(hidden)]
+    pub fn seen_expired_len_for_test(&self) -> usize {
+        self.seen_expired.lock().map_or(0, |seen| seen.len())
     }
 
     /// 定位一个对局。

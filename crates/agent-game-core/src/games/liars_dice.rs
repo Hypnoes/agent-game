@@ -210,6 +210,16 @@ impl LiarsDiceEngine {
         }
     }
 
+    /// 直接改写"上一次行动的时刻"。
+    ///
+    /// 只给测试用：提示词按 `last_action.elapsed()` 渲染"对手思考了多久"，
+    /// 要定点验证 10 秒 / 20 秒 / 40 秒三个阈值，只能把时钟拨回去。
+    /// 与 [`Self::set_dice`] 同理，生产路径永远不调它。
+    #[doc(hidden)]
+    pub fn set_last_action(&mut self, at: Instant) {
+        self.last_action = at;
+    }
+
     #[must_use]
     pub fn current_call(&self) -> Option<&Call> {
         self.current_call.as_ref()
@@ -567,9 +577,12 @@ impl LiarsDiceEngine {
     fn build_prompt(&self, player_index: Option<usize>) -> String {
         let wait_budget = self.block_budget.as_secs_f64();
         let turn_timeout = self.turn_timeout.as_secs_f64();
-        let waited = self.last_action.elapsed().as_secs();
-        let remaining = turn_timeout - (self.last_action.elapsed().as_secs_f64());
-        let remaining = remaining.max(0.0);
+        // 两个读数必须来自同一个时间基准：`waited` 是整秒（"已思考 45 秒"），
+        // `remaining` 是倒计时（"只剩 15 秒"）。若在两次 `elapsed()` 之间取，
+        // 二者之和会差 1，提示词自己就前后矛盾。
+        let elapsed = self.last_action.elapsed().as_secs();
+        let waited = elapsed;
+        let remaining = (self.turn_timeout.as_secs().saturating_sub(elapsed)) as f64;
 
         match self.phase {
             "finished" => {

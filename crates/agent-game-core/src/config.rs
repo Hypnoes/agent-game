@@ -79,9 +79,14 @@ impl Config {
 
 /// 把秒数转成 `Duration`。
 ///
-/// 负数与 NaN 会被夹成 0 并保留成"立即返回"的语义，而不是 panic：
-/// 这个函数只用于内部常量，但一个写错的常量不该让进程起不来。
-fn secs_f64(secs: f64) -> Duration {
+/// 负数、NaN、无穷会被夹成 0 并保留成"立即返回"的语义，而不是 panic：
+/// `Duration::from_secs_f64` 对这三类输入会 panic，而配置写错不该让进程起不来。
+///
+/// 公开是为了让它可测：`NaN` 与 `inf` 如果走到 `from_secs_f64` 会直接崩，
+/// 而调用方（`Config::default`）传的永远是常量——没有用例的话，`&&` 被改成
+/// `||` 这类错误永远暴露不出来。
+#[must_use]
+pub fn secs_f64(secs: f64) -> Duration {
     if secs.is_finite() && secs > 0.0 {
         Duration::from_secs_f64(secs)
     } else {
@@ -131,5 +136,29 @@ mod tests {
         let cfg = Config::default();
         assert!(client_timeout_secs > cfg.block_budget_secs());
         assert!(client_timeout_secs - cfg.block_budget_secs() >= 10.0);
+    }
+
+    #[test]
+    fn a_positive_finite_number_becomes_a_duration() {
+        assert_eq!(secs_f64(55.0), Duration::from_secs(55));
+        assert_eq!(secs_f64(0.5), Duration::from_millis(500));
+    }
+
+    #[test]
+    fn nan_and_infinity_are_clamped_instead_of_panicking() {
+        // `&&` 改成 `||` 会让 NaN 也进入 `Duration::from_secs_f64`，那里会 panic。
+        // 这条用例是那个变异体的唯一看门人。
+        assert_eq!(secs_f64(f64::NAN), Duration::ZERO);
+        assert_eq!(secs_f64(f64::INFINITY), Duration::ZERO);
+        assert_eq!(secs_f64(f64::NEG_INFINITY), Duration::ZERO);
+    }
+
+    #[test]
+    fn zero_and_negative_become_zero() {
+        // `secs > 0.0` 改成 `>=` 对 0 的结果不变（两条分支都给 ZERO），
+        // 但负数必须被夹住。
+        assert_eq!(secs_f64(0.0), Duration::ZERO);
+        assert_eq!(secs_f64(-1.0), Duration::ZERO);
+        assert_eq!(secs_f64(-0.5), Duration::ZERO);
     }
 }
