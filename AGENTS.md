@@ -2,128 +2,266 @@
 
 改动本仓库时必须遵守的硬约束。每一条都来自实测中踩过的坑，不是风格偏好。
 
-## 1. MCP 端点只能用 `Route` + `session_manager.asgi_app` 挂载
+Rust 重写（见 `docs/issues/004-riir.md`）保留了全部旧约束的**意图**，但多数约束
+的形态变了：旧版靠文档纪律与 `except Exception` 兜住的东西，现在由类型与结构表达。
+每条都标了"旧版怎么守"和"现在怎么守"，以及看门用例在哪个文件。
 
-```python
-app.router.routes.append(
-    Route("/mcp", endpoint=session_manager.asgi_app, methods=["GET", "POST", "DELETE"])
-)
-```
+---
 
-三种错误写法及其后果：
+## 1. `/mcp` 不能重定向到 `/mcp/`
 
-| 写法 | 后果 |
-|---|---|
-| `Mount("/mcp", app=...)` | 返回 307 重定向到 `/mcp/`，裸 HTTP 客户端失败 |
-| `async def` 包装后 `return None` | `TypeError: 'NoneType' object is not callable` |
-| 忘了 `methods=[...]` | GET/DELETE 请求被拒 |
+MCP 的 Streamable HTTP 客户端不会跟随 307。旧版用 `Mount("/mcp", ...)` 会 307 到
+`/mcp/`，裸 HTTP 客户端直接失败；旧版因此强制用 `Route` + `session_manager.asgi_app`。
 
-另外 `StreamableHTTPSessionManager.run()` 在同一个实例上只能进入一次，所以 `game_server.py` 用 `create_app()` 工厂生产 app。测试必须每个用例调用一次 `create_app()`，复用模块级 `app` 会在第二个用例抛 `RuntimeError`。
+**现在**：`axum::routing::any_service(StreamableHttpService)` 挂在 `/mcp` 上，
+`nest_service` 不加尾斜杠重定向。
 
-## 2. 阻塞等待预算上限是 55 秒，消费端超时必须大于它
+**看门用例**：`crates/agent-game-server/tests/mcp_transport.rs::initialize_returns_a_session_id_without_redirecting`
+（真实 `POST initialize`，断言 200 且带 `Mcp-Session-Id`）。
 
-`liars_dice_state` 在非当前回合时会挂起，服务端预算是 55 秒（`config.BLOCK_BUDGET`，MCP 层与 REST 层共用这一个常量）。请求里传更大的值会被截断。
+---
 
-任何 MCP 消费端的工具调用超时必须超过 55 秒。DSH 的 `@deepseek-ai/dsh-mcp-client` 默认 `toolCallTimeoutMs: 60000` 勉强够用，配置里写的是 `70000`。调低到 60 秒以下会在服务端返回之前先触发传输层超时，Agent 看到的是超时错误而不是对局状态。
+## 2. 消费端超时必须大于服务端的等待预算
 
-## 3. 游戏身份来自 `player_token`，`mcp-session-id` 只是连接缓存键
+服务端预算 55 秒（`Config::block_budget`），README 里配的 MCP 客户端超时是 70 秒。
+反过来的话客户端会在服务端返回之前先超时，Agent 看到的是传输层错误而不是对局状态。
 
-`mcp-session-id` 描述的是连接，不是玩家。带 `player_token` 的请求先在所有活动对局里按 token 查找，找到即复用；找不到才走匹配/新建。
+**看门用例**：`crates/agent-game-server-core/src/config.rs::client_timeout_leaves_room_for_the_server`
+（断言 70 > 55 且余量 ≥ 10）。
 
-违反这条的后果是可复现的：每个 MCP 连接各持一局，两名玩家被分进两局，双方调用 `state` 都得到"轮到你"。`tests/test_mcp_server.py::test_player_token_identity_wins` 就是这个缺陷的回归用例，不要删。
+---
 
-新增游戏时，多人的引擎需要实现 `_find_player_by_token(token)`，身份复用依赖它。
+## 3. 身份来自 `player_token`，`Mcp-Session-Id` 只是连接缓存键
+
+`Mcp-Session-Id` 描述连接，不描述玩家。带 `player_token` 的请求先在所有活动对局里
+按 token 查找，找到即复用；找不到才走匹配/新建。
+
+违反这条的后果是可复现的：每个 MCP 连接各持一局，两名玩家被分进两局。
+
+**看门用例**：
+- `mcp_transport.rs::the_same_token_returns_to_the_same_game_across_connections`
+- `crates/agent-game-server/src/state.rs::two_states_do_not_share_sessions`
+
+新增多人游戏时，引擎必须实现 `find_player_by_token()`——身份复用依赖它。
+
+---
 
 ## 4. 多人引擎的 `bid` / `challenge` / `state` 必须强制要求 `player_token`
 
-`player_token` 在这些动作上是必填项，不是可选的加固。`LiarsDiceEngine._validate_player` 缺 token 直接抛错；服务端侧 `_state_player_error` 同样在缺 token 时返回 403。
+`player_token` 在这些动作上是必填项，不是可选的加固。缺 token 直接拒绝。
 
-**症状（曾经真实存在）：** 缺 token 被当成"跳过校验"，于是任何人传一个 `player_index` 就能读到对手的骰子，还能替对手 `bid` / `challenge`。大话骰的全部玩法建立在私有信息上，这条一松，游戏就没有意义了。
+**症状（曾经真实存在）**：缺 token 被当成"跳过校验"，于是任何人传一个
+`player_index` 就能读到对手的骰子，还能替对手叫数。大话骰的全部玩法建立在私有
+信息上，这条一松，游戏就没有意义了。
+
+**现在**：校验在 `core::identity::check_player_identity()`，REST 与 MCP 共用。
+多人引擎通过 `player_tokens()` 暴露 token 列表，`PlayerMode::Multi` 决定是否强制。
 
 只有 `join` 允许不带 token（新玩家入场）。
 
+**看门用例**：
+- `crates/agent-game-server-core/src/games/liars_dice.rs::actions_require_player_token`
+- `crates/agent-game-server/tests/http_contract.rs::the_player_view_needs_the_token_header`
+
+---
+
 ## 5. 校验必须在等待之前完成
 
-`POST /games/{session_id}/action` 的 `state` 分支顺序是固定的：解析入参 → 校验玩家身份 → 才进入 `wait_for_change`。
+`state` 分支的顺序是固定的：解析入参 → 校验玩家身份 → 才进入等待。
 
-**症状：** 校验挪到等待之后，一个越界的 `player_index` 或错误的 `player_token` 会先白等满整个 55 秒预算，然后在 Agent 以为"对手在思考"之后才报错。无效输入必须立刻报错；`_state_player_error()` 在 `wait_for_change` 之前被调用，就是为了这个。
+**症状**：校验挪到等待之后，一个越界的 `player_index` 或错误的 `player_token`
+会先白等满整个预算（55 秒），然后在 Agent 以为"对手在思考"之后才报错。
 
-`GET /games/{sid}/state/{idx}` 走同一套校验但不进入任何等待——它是调试与管理界面的查询入口。
+旧版只有 REST 分支遵守这条，MCP 分支相反——同一个错 token 的调用，一条通道立刻
+报错，另一条白等 55 秒。
 
-## 6. `wait_for_change` 在循环里重判回合谓词
+**看门用例**：
+- `http_contract.rs::a_bad_token_fails_fast_instead_of_waiting`
+- `mcp_transport.rs::a_bad_token_fails_fast_over_mcp`
+  （都断言 < 500ms，远小于一个预算）
 
-`ChangeSignal.notify()` 是全局广播。3 人及以上的对局里，任何一名玩家叫数都会唤醒所有等待者——包括还没轮到的第三方。
+---
 
-**症状：** 醒来就返回会让 Agent 以为自己可以行动，于是发出一个必然被 `_check_turn` 拒绝的 `bid`，或者在 `state` 里拿到一段"还没轮到你"的文本后再次紧循环。
+## 6. 等待唤醒不等于轮到我，必须重判
 
-因此 `wait_for_change` 用一个 `while True` 循环：每轮先 `subscribe()`、再判 `_is_my_turn_or_over()`、再 `wait(剩余预算)`；被唤醒只是回到循环顶部重新判断，剩余预算耗尽才返回 `"timeout"`。`tests/test_wait.py` 覆盖这条，别把它简化回"任何一次唤醒就返回"。
+3 人以上时任何一名玩家叫数都会广播。醒来就返回会让 Agent 以为自己可以行动，
+于是发出一个必然被 `check_turn` 拒绝的动作。
 
-## 7. `timeout` 解析只有一份实现：`config.parse_block_budget`
+`core::wait::wait_for` 是唯一实现：每轮先判条件、再等剩余预算，被唤醒只是回到
+循环顶部。引擎只需提供 `is_ready_for()`。
 
-`timeout` 参数的语义由 `config.parse_block_budget(raw, default=None)` 统一决定，MCP 层（`mcp_server._run_action`）与 REST 层（`game_server.game_action`）都必须调用它：
+**顺序也必须固定**：先订阅、再判条件、再等。反过来会让"检查"与"订阅"之间发生的
+变更丢掉唤醒，白等满整个预算。
+
+**看门用例**：
+- `crates/agent-game-server-core/src/wait.rs::a_spurious_wakeup_keeps_waiting`
+- `crates/agent-game-server-core/src/wait.rs::no_lost_wakeup_when_notified_before_the_first_check`
+- `crates/agent-game-server-core/src/signal.rs::no_lost_wakeup_between_subscribe_and_wait`
+
+---
+
+## 7. `timeout` 解析只有一份实现：`core::budget::resolve_budget`
 
 | 传入 | 语义 |
 |---|---|
-| 省略 / `None` | 用满当前 `BLOCK_BUDGET`（55 秒） |
-| 数值 | 截断到 `[0, 55]`；`0` 表示**本次不等待**，立即返回 |
-| `str` / `bool` / `NaN` / `inf` | `ValueError` |
+| 省略 / `null` | 用满当前 `Config::block_budget` |
+| 数值 | 夹到 `[0, cap]`；`0` 表示**本次不等待**，立即返回 |
+| `bool` / 字符串 / `NaN` / `inf` | 错误 |
 
-**症状：** 两条传输曾经各有各的写法，语义正好相反——MCP 侧是 `float(args.pop("timeout", None) or BLOCK_BUDGET)`，`timeout=0` 被 `or` 吞成 55 秒；REST 侧是 `min(float(...), BLOCK_BUDGET)`，`0` 就是 `0`。同一个客户端在两条通道上等到的时长不一样。
+**症状**：两条传输曾经各有各的写法，语义正好相反——MCP 侧
+`float(args.pop("timeout", None) or BLOCK_BUDGET)` 让 `timeout=0` 被 `or` 吞成 55 秒；
+REST 侧 `min(float(...), BLOCK_BUDGET)` 让 `0` 就是 `0`。同一个客户端在两条通道上
+等到的时长不一样。
 
-同理别把 `BLOCK_BUDGET` 写成函数默认值：默认值在 import 时求值一次，之后运维或测试改模块全局就不生效了。`parse_block_budget` 在调用时读，`config.BLOCK_BUDGET` 才能被 monkeypatch。
+**现在**：解析器只有一个公开入口，其它地方拿到的是 `f64` 预算而不是原始 JSON，
+写不出第二份解析。
 
-## 8. `GET /games/{session_id}` 必须剥掉 `SECRET_STATE_KEYS`
+**看门用例**：`crates/agent-game-server-core/src/budget.rs` 全部用例，加
+`http_contract.rs::a_non_numeric_timeout_is_rejected` 与
+`mcp_transport.rs::timeout_zero_does_not_block_over_mcp`。
 
-`get_public_state()` 是给 admin 用的**全量**视图，含 `target`（猜数字的答案）与 `all_dice`（大话骰全场骰子）。`game_public_state()` 在副本上按 `SECRET_STATE_KEYS` 过滤后才返回给 Agent。
+---
 
-**症状：** 直接把 `get_public_state()` 回给 Agent，等于把答案和对手的骰子一起送出去，游戏当场失去意义。
+## 8. 秘密信息靠**构造**，不靠剥离
 
-秘密信息只有 `/admin/games/{id}` 一个出口（过 `_check_admin_token` 之后）。新增带秘密字段的引擎时，在自己的类上声明 `secret_keys`——那是权威来源；`SECRET_STATE_KEYS` 只是"引擎没声明"时的默认集合。
+`public_view()` 与 `admin_view()` 由引擎分别构造。运行时没有"按名字删键"这一步。
+
+**症状**：旧版是 `{k: v for k, v in state.items() if k not in secrets}`。秘密名单
+拼错一个字母（`all_dices`），秘密原样漏给 Agent，编译期与运行期都不会有任何反应。
+
+只有 `/api/v1/admin/*` 能看到秘密。新增带秘密字段的引擎必须同时写 `public_view()`，
+并在 `sensitive_keys()` 里声明那些字段——后者是**测试的期望清单**，生产路径不读它。
+
+**看门用例**：`crates/agent-game-server/tests/invariants.rs::every_registered_engine_keeps_its_secrets_out_of_the_public_view`
+（遍历注册表里**每一个**引擎）。
+
+---
 
 ## 9. 回合超时与开盅对"输掉本轮"的处理必须一致
 
-`check_timeout` 的回合超时分支与 `_challenge` 都必须 `self.current_call = None`。
+`check_timeout` 的回合超时分支与 `challenge` 都必须 `self.current_call = None`。
 
-**症状（曾经真实存在）：** 超时分支只掉骰、换回合，不清本轮叫数。下家面对一个
+**症状（曾经真实存在）**：超时分支只掉骰、换回合，不清本轮叫数。下家面对一个
 无法再加码的僵尸叫数（数量可能已超过掉骰后的总数），既不能加码也不能弃权，
 只能替别人的超时开盅——胜负由别人的超时决定。3 人局可稳定复现。
 
+**看门用例**：
+- `crates/agent-game-server-core/src/games/liars_dice.rs::turn_timeout_clears_the_round_bid`
+- `invariants.rs::a_timeout_clears_the_round_bid_like_a_challenge_does`
+- `crates/agent-game-server-core/tests/full_game.rs::a_timeout_in_the_middle_does_not_lock_the_next_player`
+
+---
+
 ## 10. `check_timeouts` 必须按引擎隔离异常
 
-per-session 循环要 `try/except Exception`，记日志后继续下一个。
+per-session 循环必须隔离错误，记日志后继续下一个。
 
-**症状：** 一个引擎的 `check_timeout` 抛异常会中断整轮结算，其余对局不再超时。
+**症状**：一个引擎的 `check_timeout` 抛异常会中断整轮结算，其余对局不再超时。
 REST 的 `state` 分支在请求内直接调用 `check_timeouts()`，所以一个坏引擎能把
-**无关对局**打成 500。后台轮询有兜底，请求内路径没有。
+**无关对局**打成 500。
+
+**现在**：`check_timeout` 返回 `Result<Option<TimeoutEvent>, EngineError>`，
+`Err` 分支只记 `warn!` 并继续。类型表达了"这里可能失败且必须隔离"。
+
+**看门用例**：`crates/agent-game-server-core/src/manager.rs::a_broken_engine_does_not_stop_the_others`。
+
+---
 
 ## 11. Admin token 永远存在，且绝不交给未出示它的人
 
-`_ADMIN_TOKEN` 在导入 `game_server` 时解析一次：有 `AGENT_GAME_ADMIN_TOKEN` 就用它，没有就 `secrets.token_urlsafe(24)` 当场生成。没有"不设 token 就不校验"这个分支。
+token 在启动时解析一次：有 `AGENT_GAME_ADMIN_TOKEN` 就用它，没有就随机生成。
+没有"不设 token 就不校验"这个分支。
 
-`GET /admin` 只在请求方**已经出示**正确 token（`?token=` 或 `X-Admin-Token` 头）时才把 token 注入页面；两者都没有或都不对，仍返回页面骨架，但页面发起的 admin API 调用会 403。
+`GET /admin` 只在请求方**已经出示**正确 token 时才把它注入页面；两者都没有或都不对，
+仍返回页面骨架，但页面发起的 admin API 调用会 403。
 
-**症状：** 把 token 注入给匿名访问者，等于把 `/admin/games` 的全部秘密信息对任何能连上端口的人敞开；反过来退化成"没配 token 就不校验"更糟，那连"配置错了"都不会有人发现。
+**症状**：把 token 注入给匿名访问者，等于把 `/api/v1/admin/games` 的全部秘密信息对
+任何能连上端口的人敞开；反过来退化成"没配 token 就不校验"更糟，那连"配置错了"都
+不会有人发现。
 
-`_token_matches()` 按 UTF-8 字节做 `secrets.compare_digest`：`str` 版遇到非 ASCII 会抛 `TypeError`，一个带非 ASCII 的 `X-Admin-Token` 头就能把 403 变成 500。
+比较按 UTF-8 字节做恒定时间比较（`subtle::ConstantTimeEq`）。旧版专门处理过非 ASCII
+的 `TypeError`——Rust 里不存在编码问题，token 就是字节。
 
-`/admin/ws` 同样要鉴权：浏览器 WebSocket 不能设自定义头，token 走 `?token=`，
-不匹配以 1008 关闭。
+`/api/v1/admin/ws` 同样要鉴权：浏览器 WebSocket 不能设自定义头，token 走 `?token=`，
+不匹配返回 403 / `close(1008)`。
+
+**看门用例**：
+- `http_contract.rs::every_admin_endpoint_requires_a_token`
+- `mcp_transport.rs::the_admin_websocket_rejects_missing_and_wrong_tokens`
+- `crates/agent-game-server/src/state.rs::token_comparison_is_exact`
+
+---
 
 ## 12. 身份校验必须与传输无关，且在等待之前
 
-校验逻辑在 `games/game_engine.py::player_identity_error()`，REST 与 MCP 共用。
-两条传输都必须在进入 `wait_for_change` **之前**调用它。
+校验逻辑在 `core::identity::check_player_identity()`。REST 与 MCP 共用同一份判断，
+两条传输各写一个**翻译函数**（`ApiError::from_engine` 与 `engine_error_text`），
+但分类只在 `EngineError::is_client_error()` 里定义。
 
-**症状：** 两条传输各自实现一遍时语义分叉了——REST 先校验再等待，MCP 先等待
-再校验。同一个 token 打错的 `state` 调用，REST 立刻 400，MCP 白等满 55 秒。
+**症状**：两条传输各自实现一遍时语义分叉了——REST 先校验再等待，MCP 先等待再校验。
+
+**看门用例**：`http_contract.rs` 与 `mcp_transport.rs` 里成对出现的 fast-fail 用例。
+
+---
 
 ## 13. 测试不准用 `skip` 给"能力缺失"让路
 
-核心能力被删掉时套件必须红。`pytest.skip` 让"功能删了"和"功能正常"在退出码上
-一样——曾经守住阻塞等待的两条主验收用例就是这样写的，删掉整个 `wait_for_change`
-之后它们变成 skipped，套件仍然全绿。
+核心能力被删掉时套件必须红。
+
+Rust 里没有 `skip` 这个概念（`#[ignore]` 只用于"慢"，不用于"能力缺失"），所以这条
+从"禁止某种写法"变成"不要用 `#[ignore]` 掩盖失败"。CI 里跑 `cargo test` 时
+`#[ignore]` 的用例不执行——把能力验收用例标上它，等于删掉它。
+
+**看门**：CI 不传 `--ignored`，且 `crates/agent-game-server/tests/` 下没有任何
+`#[ignore]`。
+
+---
 
 ## 14. 每条约束都要有对应的看门用例
 
-约束写在本文档里、如果没有任何用例对应它，它实际上只是一段注释。
-`tests/test_meta.py::GUARDED_INVARIANTS` 维护这张映射表，新增约束时同步登记。
+约束写在这份文档里、如果没有任何用例对应它，它实际上只是一段注释。
+
+**看门**：本文档每一条都显式写了"看门用例"路径。新增约束时同步补用例与这一行，
+而不是只加一段说明。
+
+---
+
+## 15. 规则用"边界"测，不用"能跑"测
+
+第一轮变异测试在 `core` 上跑出 144 个存活变异体，其中绝大多数是同一个原因：
+**既有用例只验证"这条路径能跑通"，没有验证"差一个单位时结果应该不同"。**
+
+具体形态：
+
+| 变异 | 为什么最初的套件抓不到 |
+|---|---|
+| `>` 改成 `>=`（超时判定） | 用例只测"很早就超时"与"完全没超时"，没测恰好等于时限 |
+| `*` 改成 `+`（跨 1 的叫数换算） | 用例只测"明显够"与"明显不够"，没测下界本身 |
+| `public_view` 返回 `Default` | 用例只断言"秘密不在里面"，没断言"别的东西在里面" |
+| `session_ids` 返回 `vec![]` | 用例只测"新建之后能找到"，没测空表返回空 |
+| `signal()` 返回新 `Arc` | 用例只测"通知能唤醒"，没测两次取到的是不是同一份 |
+
+因此补了三类用例，它们现在都在 `crates/agent-game-core/tests/` 下：
+
+| 文件 | 守什么 |
+|---|---|
+| `boundaries.rs` | 每个比较符的两侧：下界成立、下界外不成立 |
+| `params.rs` | 参数访问器的契约：缺键、`null`、`bool`、浮点、覆盖、不变的副本 |
+| `routing.rs` | 管理器访问器返回真实那份、身份复用的类型匹配、保留期差一个单位 |
+
+**新增规则时的自检**：写下 assert 之后，问一遍"把对应的比较符改一个单位，这条会红吗"。
+不会红，就还没测到位。
+
+---
+
+## 附：写作与编码约定
+
+| 项 | 约定 |
+|---|---|
+| 语言 | 注释、文档、错误消息、提示词一律中文 |
+| `unsafe` | workspace 级 `forbid` |
+| `unwrap` / `expect` | 非测试代码禁止（`clippy.toml` 里对测试放行） |
+| 行宽 | 交给 `rustfmt`；中文注释按显示宽度算会误报，因此不设 `max_width` |
+| 错误 | 请求路径上的所有失败都走 `Result`，不 `panic` |
+| 时间 | 代码里用 `Instant`；只有跨进程的展示值才转成毫秒 |
+| 测试替身 | `core::testing::DummyEngine`，三个 crate 共用；它不随二进制发布 |

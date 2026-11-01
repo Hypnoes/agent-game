@@ -1,0 +1,33 @@
+[package]
+name = "agent-game-server-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "agent-game 的纯逻辑内核：规则、预算、身份、等待原语、提示词与 session 路由"
+
+[features]
+# 暴露 `testing` 模块，让 server / mcp 两个 crate 的集成测试共用一个引擎替身。
+testing = []
+
+[dependencies]
+rand.workspace = true
+rand_chacha.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "macros"] }
+toml.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "test-util", "macros"] }
+proptest = "1"
+insta = { version = "1", features = ["json"] }
+rand_chacha.workspace = true
+
+[lints]
+workspace = true

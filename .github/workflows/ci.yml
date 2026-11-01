@@ -5,49 +5,77 @@ on:
     branches: [master]
   pull_request:
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
 
+jobs:
+  check:
+    name: 格式与静态检查
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          enable-cache: true
+          components: rustfmt, clippy
 
-      - name: 安装依赖
-        run: uv sync --all-groups
+      - uses: Swatinem/rust-cache@v2
 
-      - name: 静态检查
-        run: uv run ruff check .
+      - name: 格式
+        run: cargo fmt --all -- --check
 
-      - name: 单元测试与覆盖率
-        # 覆盖率门槛在 pyproject 的 [tool.coverage.report] 里（fail_under = 90）。
-        # 覆盖率不是验收判据——它只回答"这行被跑过"，不回答"这条规则被守住"。
-        # 真正的验收是下面的变异测试。
-        run: uv run coverage run -m pytest && uv run coverage report
+      - name: Clippy
+        # `-D warnings` 让任何告警都变红。workspace 的 lint 配置在 Cargo.toml 的
+        # [workspace.lints] 里，测试代码的 unwrap 由 clippy.toml 放行。
+        run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    name: 测试与覆盖率
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: taiki-e/install-action@nextest
+
+      - name: 单元与集成测试
+        run: cargo nextest run --workspace
+
+      - name: 覆盖率
+        # 门槛在下面这条命令里，不是配置文件：覆盖率不是验收判据
+        # （变异测试才是），它只防止大幅倒退。
+        run: cargo llvm-cov --workspace --summary-only --fail-under-lines 85
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 管理页面逻辑
+        # admin.html 的 JS 是字符串资产，Rust 侧只能断言"文件里有没有某段文本"。
+        # 这个脚本把 `<script>` 抽出来在最小 DOM 桩里跑，验证转义、状态归类与渲染。
+        run: node tools/verify-admin-ui.js
 
   mutation:
-    # 变异测试单独一个 job：它要跑 50 次完整套件，约 10 分钟。
-    # 只有它失败时才说明了"测试没看住某处规则"，与覆盖率无关。
+    name: 变异测试
+    # 单独一个 job：它要反复重跑整套测试，比前两个慢一个数量级。
+    # 只有它失败才说明"测试没看住某处规则"，与覆盖率无关。
     runs-on: ubuntu-latest
     needs: test
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-mutants
 
-      - name: 安装依赖
-        run: uv sync --all-groups
-
-      - name: 变异测试
-        # 退出码非零表示有变异体存活（某个位置没有看门人）或变异体失效
-        # （源码改了而脚本没跟上）。两者都该让 CI 变红。
-        run: uv run python scripts/mutation_check.py
+      - name: 变异测试（core）
+        # 只对 core 做全量：规则、预算、身份、等待都在这里，是"必须被守住"
+        # 的那一层。server/mcp 两层的传输行为已由集成测试覆盖，全量跑代价过高。
+        run: cargo mutants -p agent-game-server-core --config .config/mutants.toml

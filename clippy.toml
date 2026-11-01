@@ -1,0 +1,10 @@
+# clippy 的 lint 默认对整个 crate 生效，包括 `#[cfg(test)]` 模块。
+# 测试代码里 `unwrap()` 是断言失败的正常表达，逐处 `#[allow]` 只会淹没真正
+# 需要注意的地方。这三个开关把"禁令"精确限定在非测试代码里。
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+
+# `list_tools` 必须 `async`（`ServerHandler` 的签名要求返回 Future），
+# 而工具表本身不需要 await。这是 rmcp 的既定形态，不是可以改掉的设计；
+# 关掉这条 lint 让"async 里没 await"不再是错误。
