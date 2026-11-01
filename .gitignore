@@ -26,3 +26,7 @@ Thumbs.db
 # 变异测试产物
 mutants.out/
 mutants-*.txt
+
+# 本地运行时输出
+*.out
+*.err
