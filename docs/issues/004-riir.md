@@ -208,19 +208,90 @@ axum 0.8 把两者视为同一个匹配形状，参数名不同即冲突。统�
 
 ---
 
+## 实施之后的三轮补充
+
+合并进 `master` 之前又做了三轮，每一项都由"先验证、再发现缺陷"驱动。
+
+### 第 1 轮：真实部署验收，发现两个同桌匹配缺陷
+
+写了 `crates/agent-game-server/examples/play_liars_dice.rs`：用 N 条真实 MCP
+连接、走真实 HTTP、把一局打到 `finished`。它立刻发现三个玩家被分到了**两桌**。
+
+两个缺陷互相掩盖，改动一处才让另一处现形：
+
+1. **MCP 建局时丢掉创建参数**。调用方传 `player_count=3`，传输层构造
+   `CreateParams` 时只放了 `player_token`，桌子按默认 2 人建出来；第三个玩家
+   来匹配又按 3 去比，永远匹配不上。
+2. **`player_name` 混进了建桌配置**。它是动作参数，但被留在 `setup` 里；
+   两个人名字不同 ⇒ `compatible` 判为不兼容 ⇒ 永远坐不到一起。
+
+第 1 条在"只透传 token"的时期掩盖了第 2 条——那时 `player_name` 根本到不了
+`manager`。修完之后，3 人局一次打完（112 次调用、70 秒）。
+
+回归用例：`crates/agent-game-server-core/tests/table_matching.rs`（8 条）。
+
+### 第 2 轮：重写 `admin.html`
+
+旧版是逐字复制后改了三处路径，带着两张硬编码表（游戏名 `TYPE_LABEL`、状态优先级
+`STATUS_ORDER`）。那让"零改动加游戏"名不副实：新游戏必须回来改这个文件。
+
+重写后：展示名由服务端下发；状态只分"进行中/已结束"，新引擎用 `draw` 之类的终态也
+能显示；未识别的字段原样列出；事件委托取代内联 `onclick`（又一处注入面）。
+
+配套 `tools/verify-admin-ui.js`：把模板里的 `<script>` 抽出来，在最小 DOM 桩里执行，
+验证转义、状态归类与渲染。CI 里用 node 跑。它比"用无头浏览器点一遍"轻得多，
+且不需要装任何依赖。
+
+### 第 3 轮：变异测试扩到 mcp 与 server
+
+| crate | 首轮存活 | 最终存活 | 补的用例 |
+|---|---|---|---|
+| `-mcp` | 45 | 8 | `execute.rs`（25 条，直接调 `execute` 不经过 HTTP）+ `lib.rs` 单元用例（13 条） |
+| `-server` | 28 | 0 | `startup.rs`（13）、`glue.rs`（11）、`binary.rs`（5，子进程） |
+
+这一轮又发现三个真实缺陷：
+
+1. **`--prompt-dir` 是空操作**。路径存进了 `AppState`，但没有任何代码读它——
+   引擎用的还是内置模板。`PromptStore.dir` 改成 `RwLock<Option<PathBuf>>` 并加
+   `set_dir()`，`set_prompt_dir` 真正把它同步给每个引擎。
+2. **工具表硬编码在 mcp 层**。`GameEngine::describe_tools()` 与 `ToolSpec` 补进
+   协议，mcp 只做翻译。否则新游戏的工具永远返回"未知工具"——这正是"零改动加游戏"
+   的另一半。
+3. **提示词仓库是进程级共享，测试并行时互相清目录**。三条涉及 `set_dir` 的用例
+   加锁串行，否则套件间歇性变红（跑了三次才确认修好）。
+
+`--prompt-dir` 那条还顺带说明了一件事：**一个参数被解析、被存下来、被打印，
+不等于它被用了。** 只有变异测试（把 `set_prompt_dir` 改成 `()`）才会问
+"删掉这行，有人会发现吗"。
+
+### 最终验收
+
+| 项 | 实际 |
+|---|---|
+| 测试 | **518 passed** |
+| 覆盖率 | **94.95% 行 / 93.45% 分支** |
+| 静态检查 | clippy 零告警，fmt 零差异 |
+| 变异测试 | core 0 存活 / server 0 存活 / mcp 8 存活（全部记录为等价） |
+| 管理页面 | `tools/verify-admin-ui.js` 全通过 |
+| 端到端 | 真实二进制 + 3 条 MCP 连接，114 次调用打到 `finished` |
+
+---
+
 ## 遗留
 
-- **`admin.html` 是逐字复制旧版后改了三处路径**，没有重写。它的 `esc()` 转义、
-  WS 重连逻辑都还带着旧版的历史痕迹（比如 `STATUS_ORDER` 里 `won` 与 `finished`
-  同权重）。功能正确，但不属于"Rust 味"的产物。
+- **`mcp` 层的 8 个存活变异体没有补测**。它们全部落在 `ServerHandler` trait 的
+  包装层（`call_tool` 的 match guard、`list_tools` 的 async 包装、`session_key`
+  的转发）。要覆盖它们需要构造 `RequestContext<RoleServer>`（要 `Peer` 与
+  `CancellationToken`），而真正的影响面已被 `mcp_transport.rs` 的真实 HTTP
+  往返覆盖。逐条理由写在 `.config/mutants.toml`。
 - **`state_signature` 的失败分支没有真正的用例**。它返回 `Option<String>`，
   `None` 表示序列化失败；但 `serde_json::Value` 实际上总能序列化，
   构造一个真的失败需要给引擎塞一个会 panic 的 `Serialize` 实现。
   `poller.rs` 的 `(None, _) => false` 分支因此从未被走到。
-- **`cargo mutants` 只覆盖了 core**。server 与 mcp 两层没有跑变异测试：
-  它们的测试大多是真实 HTTP 往返，单次全量约 30 秒，乘上变异体数量后
-  代价过高。当前的替代是靠集成测试（50 条）覆盖可观测行为。
-- **`exclude_re` 的 12 条等价判定是人工结论**。每条都写了理由，但"等价"
-  本身不可证明——如果将来某条理由因为代码改动而失效，配置不会自动报警。
-  建议的做法是：改动 `config.rs` / `prompt.rs` / `manager.rs` 时顺手重跑一次
-  全量变异，看那条 exclude 是否还成立。
+- **`exclude_re` 的等价判定是人工结论**。每条都写了理由，但"等价"本身不可证明——
+  如果将来某条理由因为代码改动而失效，配置不会自动报警。建议：改
+  `config.rs` / `prompt.rs` / `manager.rs` / 两个引擎的 `check_timeout` 时
+  顺手重跑一次全量变异，看那条 exclude 是否还成立。
+- **`play_liars_dice.rs` 只打了大话骰**。猜数字的端到端由
+  `mcp_transport.rs::a_game_can_be_started_and_played_through_mcp` 覆盖，
+  但那条走的是进程内 app，不是真实进程。
