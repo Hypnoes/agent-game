@@ -251,9 +251,17 @@ impl AgentGameServer {
                     self.missing_session_hint(game_type, &action),
                 ));
             }
-            let mut params = serde_json::Map::new();
-            if let Some(token) = &player_token {
-                params.insert("player_token".to_owned(), Value::String(token.clone()));
+            // 新建对局时要把**调用方给的全部创建参数**带过去，而不是只带 token。
+            //
+            // 曾经只带 `player_token`，于是 `player_count=3` 被丢掉：桌子按默认值 2
+            // 建出来，第三个玩家去匹配时又按 3 去比，永远匹配不上——he 会拿到一张
+            // 全新的桌子，前面两人打的那局与他无关。
+            //
+            // 传输层专用的键（`session_id`、`timeout`）不属于创建参数，必须剥掉；
+            // 其余一律透传，由引擎自己决定认识哪些。
+            let mut params = args.raw.clone();
+            for transport_only in ["session_id", "timeout"] {
+                params.remove(transport_only);
             }
             let created = self
                 .manager

@@ -114,6 +114,19 @@ pub fn liars_dice_tools() -> Vec<Tool> {
                         "type": "string",
                         "description": "断线重连时传入之前的 token",
                     },
+                    // 建桌参数：同桌的所有玩家必须传一致的值，否则会各开一桌。
+                    "player_count": {
+                        "type": "integer",
+                        "description": "这一桌几个人（默认 2，至少 2）。同桌的所有玩家必须传同一个值。",
+                        "minimum": 2,
+                        "default": 2,
+                    },
+                    "dice_per_player": {
+                        "type": "integer",
+                        "description": "每人几颗骰子（默认 5，至少 1）。同桌的所有玩家必须传同一个值。",
+                        "minimum": 1,
+                        "default": 5,
+                    },
                 },
                 "required": ["player_name"],
             }),

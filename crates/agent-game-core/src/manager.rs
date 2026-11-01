@@ -240,6 +240,14 @@ impl GameManager {
             .map(ToOwned::to_owned);
         setup.raw.remove("player_token");
 
+        // `player_name` 是**动作参数**，不是建桌配置。
+        //
+        // 留在 `setup` 里会让"两个人想坐同一桌"永远匹配失败：他们的名字不同，
+        // `compatible` 一比较就判为不兼容，于是各开一桌。这个坑在传输层只透传
+        // `player_token` 的时期被掩盖了——那时 `player_name` 根本到不了这里；
+        // 把创建参数改成整体透传之后它立刻现形。
+        setup.raw.remove("player_name");
+
         let existing = self.session_list();
 
         // 1. 断线重连：只认同类型、且未结束的对局
