@@ -67,7 +67,7 @@ impl ApiError {
     /// 把引擎错误翻译成 HTTP 错误。
     ///
     /// 这是**唯一**的映射表：MCP 侧的翻译走
-    /// [`crate::mcp::engine_error_text`]，但分类仍由
+    /// `agent_game_server_mcp::engine_error_text`，但分类仍由
     /// [`EngineError::is_client_error`] 决定，两处不会分叉。
     #[must_use]
     pub fn from_engine(error: EngineError) -> Self {

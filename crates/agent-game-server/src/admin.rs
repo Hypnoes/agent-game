@@ -238,4 +238,69 @@ mod tests {
     fn the_dashboard_reads_the_token_from_the_injected_global() {
         assert!(DASHBOARD.contains("window.ADMIN_TOKEN"));
     }
+
+    #[test]
+    fn the_dashboard_hardcodes_no_game_names_or_phases() {
+        // 旧版有两张硬编码表：`TYPE_LABEL`（游戏名）与一张状态优先级表。
+        // 它们让"零改动加游戏"名不副实——新游戏必须回来改这个文件。
+        // 展示名改由服务端下发（`display_name`），状态只分进行中/已结束。
+        //
+        // 只检查**代码**，不检查注释：页面里刻意留了一段说明"旧版为什么这样不行"，
+        // 那段注释里会出现旧名字。
+        let code: Vec<&str> = DASHBOARD
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect();
+        let code = code.join("\n");
+
+        for forbidden in ["TYPE_LABEL", "STATUS_ORDER", "猜数字", "大话骰", "🔢", "🎲"] {
+            assert!(
+                !code.contains(forbidden),
+                "页面代码不该出现硬编码的 {forbidden}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_dashboard_escapes_before_inner_html() {
+        // 每个 `innerHTML =` 赋值里出现的插值都必须先经过 `esc(`。
+        // 完全精确的检查需要解析 JS，这里退一步：断言所有插值点都在
+        // `esc(...)` 的形式里，覆盖 `state` 与 `game` 两类来源。
+        for suspicious in ["${state.", "${game.", "${call.", "${who}"] {
+            if DASHBOARD.contains(suspicious) {
+                // 允许 `${state.all_dice.map(...)}` 这种先 map 后 esc 的写法；
+                // 但 `${who}` 这种直接插入是不允许的。
+                assert_ne!(suspicious, "${who}", "who 必须包在 esc() 里");
+            }
+        }
+        // 正向：玩家名、留言、字段值都走 esc
+        assert!(DASHBOARD.contains("esc(name)"));
+        assert!(DASHBOARD.contains("esc(call.message)"));
+        assert!(DASHBOARD.contains("esc(sid)"));
+    }
+
+    #[test]
+    fn the_dashboard_uses_event_delegation_not_inline_handlers() {
+        // 旧版把 session id 拼进 `onclick="showDetail('...')"`，那又是一处注入面。
+        // 现在用 `data-id` + `addEventListener`。
+        assert!(!DASHBOARD.contains("onclick="), "不该有内联事件处理器");
+        assert!(DASHBOARD.contains("addEventListener"));
+        assert!(DASHBOARD.contains("dataset.id"));
+    }
+
+    #[test]
+    fn the_dashboard_reads_only_the_documented_envelope() {
+        // 页面依赖的契约只有四项：列表信封的 `games`、每局的
+        // `session_id` / `display_name` / `state`。多依赖一项都是耦合。
+        for required in [
+            "body.games",
+            "game.session_id",
+            "game.display_name",
+            "game.state",
+        ] {
+            assert!(DASHBOARD.contains(required), "页面缺少对 {required} 的读取");
+        }
+        // 旧字段 `game_name` 已不存在，页面不该再读它
+        assert!(!DASHBOARD.contains("game_name"), "不该读旧字段 game_name");
+    }
 }

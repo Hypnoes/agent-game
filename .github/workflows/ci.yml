@@ -49,9 +49,18 @@ jobs:
         run: cargo nextest run --workspace
 
       - name: 覆盖率
-        # 门槛在下面这条命令里，不是 pyproject 那种配置项：Rust 这边
-        # 覆盖率不是验收判据（变异测试才是），它只防止大幅倒退。
+        # 门槛在下面这条命令里，不是配置文件：覆盖率不是验收判据
+        # （变异测试才是），它只防止大幅倒退。
         run: cargo llvm-cov --workspace --summary-only --fail-under-lines 85
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 管理页面逻辑
+        # admin.html 的 JS 是字符串资产，Rust 侧只能断言"文件里有没有某段文本"。
+        # 这个脚本把 `<script>` 抽出来在最小 DOM 桩里跑，验证转义、状态归类与渲染。
+        run: node tools/verify-admin-ui.js
 
   mutation:
     name: 变异测试

@@ -15,8 +15,7 @@ use agent_game_server_core::{
 };
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{IntoResponse, Response};
+use axum::http::HeaderMap;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -84,7 +83,7 @@ pub fn list_tools(State(state): State<AppState>) -> Json<Value> {
                 "game_type": game_type,
                 "display_name": meta.display_name,
                 "player_mode": if meta.player_mode.is_multi() { "multi" } else { "single" },
-                "tools": agent_game_server_mcp::tools::all_tools_for(game_type),
+                "tools": agent_game_server_mcp::tools::all_tools_for(registry, game_type),
             })
         })
         .collect();
@@ -283,18 +282,8 @@ pub async fn list_game_tools(
         "game_type": id,
         "display_name": meta.display_name,
         "player_mode": if meta.player_mode.is_multi() { "multi" } else { "single" },
-        "tools": agent_game_server_mcp::tools::all_tools_for(&id),
+        "tools": agent_game_server_mcp::tools::all_tools_for(registry, &id),
     })))
-}
-
-/// 空 body 也要能通过的便利函数：`create_game`/`act` 都接收原始字节，
-/// 因为要区分"空"与"畸形"。
-pub fn empty_ok() -> Response {
-    (
-        StatusCode::NO_CONTENT,
-        [(header::CONTENT_TYPE, "application/json")],
-    )
-        .into_response()
 }
 
 /// 让 `Query` 参数在不需要时也能编译。
@@ -316,7 +305,7 @@ pub async fn tools_with_query(
                 "game_type": game_type,
                 "display_name": meta.display_name,
                 "player_mode": if meta.player_mode.is_multi() { "multi" } else { "single" },
-                "tools": agent_game_server_mcp::tools::all_tools_for(game_type),
+                "tools": agent_game_server_mcp::tools::all_tools_for(registry, game_type),
             })
         })
         .collect();
@@ -326,6 +315,7 @@ pub async fn tools_with_query(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::StatusCode;
 
     #[test]
     fn empty_body_is_an_empty_object() {

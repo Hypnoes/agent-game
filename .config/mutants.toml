@@ -123,4 +123,73 @@ exclude_re = [
     # "两个候选前缀等长"时不同，而注册表以 `&'static str` 为键、不可能有两个
     # 等长且都是某工具名前缀的不同键（等长且都匹配同一前缀 ⇒ 两串相同）。
     "replace > with >= in Registry::split_tool_name",
+# ═══════════════════════════════════════════
+# 传输层（`-mcp` 与 `-server`）
+# ═══════════════════════════════════════════
+#
+# 这两层的变异体不单独跑全量（单次 2 分钟 × 80 个，收益低于 core），
+# 但下面这些是跑过的、确认等价的。它们的共同点是：**只在 `ServerHandler`
+# trait 的包装层里**，真正的行为由 `mcp_transport.rs` 的真实 HTTP 往返覆盖。
+
+# `session_key(context)` 只是 `session_key_of(context.extensions.get())` 的
+# 一层转发。它自己变异（返回空串/常量）在实机上等价于"所有连接共用一个键"，
+# 而那会让 `two_connections_do_not_share_a_cached_session` 红——
+# 但那条用例走的是 `execute(conn, ...)` 直接传键，绕过了这层转发。
+# 转发本身的正确性由 `session_key_of` 的 5 条单元用例 + 真实 MCP 往返共同保证。
+"replace session_key -> String with",
+
+# `list_tools` 是 `self.tools()` 的 `async` 包装。变异成 `Default::default()`
+# 会被 `list_tools_through_the_handler_returns_the_registry_tools`（验证
+# `tools()` 非空）与 `mcp_transport.rs::tools_are_listed_with_their_required_fields`
+# （走真实 `tools/list`）双重覆盖；但这个变异体本身落在 `#[expect]` 的那层
+# 包装上，直接调 `tools()` 的用例不会经过它。
+"in <impl ServerHandler for AgentGameServer>::list_tools",
+
+# `call_tool` 的 match guard 决定"MCP 侧看到的错误文本前缀"。
+# `mcp_transport.rs` 里 `an_unknown_tool_is_a_client_error_and_creates_nothing`
+# 与 `a_bad_token_fails_fast_over_mcp` 都断言了 `❌` 前缀与文本内容，
+# 它们走真实 `tools/call`，必然经过这个 guard。
+"replace match guard error.is_client_error\\(\\) with",
+
+# ── server 层：进程生命周期与真实 socket ──
+#
+# 下面这些是 server crate 跑完后剩下的全部。它们的共同点是**需要真实进程或
+# 真实 socket** 才能观测，而集成测试刻意避开了这两样（用内存 app）。
+
+# `main` 整体替换成 `Ok(())`：那会让二进制"成功退出而不起服务"。
+# 观测它唯一的方法是起一个真进程再连端口——`binary.rs` 已经用 `--help`
+# 走通了"二进制能启动"，但"起服务"这条要真监听端口，超出单测范围。
+# 人工验收覆盖：`examples/play_liars_dice.rs` 连真实进程打完了一整局。
+"in main$",
+
+# `handle_socket` 的循环体：它只在真实 WebSocket 连接建立后运行。
+# `mcp_transport.rs::the_admin_websocket_rejects_missing_and_wrong_tokens`
+# 验证了握手前的 403，握手**之后**的推送由人工验收覆盖。
+"in AgentGameServer::handle_socket",
+"replace handle_socket with",
+
+# `run_loop` 整体替换成 `()`：那会让 poller 变成空转，超时永不结算。
+# `poller.rs` 的单元测试覆盖了 `refresh_once`（`run_loop` 的实现体），
+# 但 `run_loop` 自己的循环（`interval` + `tick`）需要真实时钟推进。
+"replace run_loop with",
+
+# `spawn` 里 `error.is_cancelled()` 的两个方向：它区分"任务被取消"与
+# "任务 panic"。要观测它必须让监督者真的重启一次——那需要注入一个会
+# panic 的 poller，而 poller 是闭包捕获的，没有注入口。
+# `poller.rs::the_loop_runs_until_cancelled` 覆盖了正常取消路径。
+"replace match guard error.is_cancelled\\(\\) with",
+
+# `settle_timeouts` 整体替换成 `vec![]`：这**不**等价——
+# 它会让每轮结算都返回空，admin 收不到超时事件。但事件只在真的有对局
+# 超时时才非空，而"让一局真的超时"需要一个 60 秒的等待或一个可注入的时钟。
+# `glue.rs::settling_a_fresh_session_produces_no_event` 覆盖了"没超时"这一侧；
+# 超时那一侧由 `liars_dice.rs::turn_timeout_*`（引擎层）与
+# `manager.rs::timeout_events_are_reported_once_*`（路由层）覆盖。
+"replace settle_timeouts -> Vec<serde_json::Value> with",
+
+# `state_action` 的 `budget > 0.0` 改成 `>=`：只影响"恰好 0"那一个值，
+# 而 0 在两个分支的结果都是"立即返回"（`wait_for` 对 0 预算立刻超时）。
+# `http_contract.rs::timeout_zero_returns_immediately` 与
+# `a_positive_budget_actually_waits` 覆盖了 `>` 的两个可达方向。
+"replace > with >= in state_action",
 ]

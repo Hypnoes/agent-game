@@ -601,3 +601,58 @@ async fn timeout_zero_returns_immediately() {
         "timeout=0 不该等待"
     );
 }
+
+// ═══════════════════════════════════════════
+// 预算的正负两侧
+// ═══════════════════════════════════════════
+
+#[tokio::test]
+async fn a_positive_budget_actually_waits() {
+    // `if budget > 0.0` 改成 `<` 会让**正**预算不进等待——
+    // 而 `timeout=0` 那条用例在两种写法下都"立即返回"，分辨不出来。
+    //
+    // 这里用一个很小的正预算（1 秒），断言"确实等待了接近 1 秒"。
+    let app = create_app(state());
+    let (sid, tokens) = started_dice(app.clone()).await;
+
+    let (status, public) = call(
+        app.clone(),
+        "GET",
+        &format!("/api/v1/games/{sid}"),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let current = public["state"]["current_turn"].as_u64().unwrap() as usize;
+    let other = 1 - current;
+
+    let started = std::time::Instant::now();
+    let (status, _body) = call(
+        app,
+        "POST",
+        &format!("/api/v1/games/{sid}/actions"),
+        Some(
+            &json!({
+                "action": "state",
+                "player_index": other,
+                "player_token": tokens[other],
+                "timeout": 1,
+            })
+            .to_string(),
+        ),
+        &[],
+    )
+    .await;
+    let elapsed = started.elapsed();
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        elapsed >= std::time::Duration::from_millis(900),
+        "正预算必须真的等待，实际 {elapsed:?}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "等待必须被预算切断，实际 {elapsed:?}"
+    );
+}

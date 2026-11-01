@@ -20,6 +20,7 @@ pub mod wait;
 pub use config::Config;
 pub use engine::{
     ActionParams, BoxedEngine, CreateParams, GameEngine, PlayerMode, PlayerView, TimeoutEvent,
+    ToolSpec,
 };
 pub use error::{EngineError, SessionNotFound};
 pub use manager::{GameManager, Session, SessionId, SessionSnapshot, TimeoutRecord};

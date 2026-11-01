@@ -921,6 +921,110 @@ impl GameEngine for LiarsDiceEngine {
     fn setup_params(&self) -> CreateParams {
         self.setup.clone()
     }
+
+    fn describe_tools(&self) -> Vec<crate::engine::ToolSpec> {
+        use serde_json::json;
+
+        use crate::engine::ToolSpec;
+
+        let seat = json!({"type": "integer", "description": "你的玩家编号"});
+        let token = json!({"type": "string", "description": "你的身份 token（必填）"});
+
+        vec![
+            ToolSpec::new(
+                "liars_dice_join",
+                "加入大话骰（吹牛/撒谎骰子）匹配队列。只需提供名字，服务器自动匹配对手。\
+                 如果之前断线，传入 player_token 可重连回原有对局。每人5颗骰子，1是百搭。\
+                 返回玩家编号和游戏状态。",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "player_name": {"type": "string", "description": "你的名字"},
+                        "player_token": {
+                            "type": "string",
+                            "description": "断线重连时传入之前的 token",
+                        },
+                        // 建桌参数：同桌的所有玩家必须传一致的值，否则会各开一桌。
+                        "player_count": {
+                            "type": "integer",
+                            "description": "这一桌几个人（默认 2，至少 2）。同桌的所有玩家必须传同一个值。",
+                            "minimum": 2,
+                            "default": 2,
+                        },
+                        "dice_per_player": {
+                            "type": "integer",
+                            "description": "每人几颗骰子（默认 5，至少 1）。同桌的所有玩家必须传同一个值。",
+                            "minimum": 1,
+                            "default": 5,
+                        },
+                    },
+                    "required": ["player_name"],
+                }),
+            ),
+            ToolSpec::new(
+                "liars_dice_state",
+                "查看大话骰对局当前状态。**注意：如果还没轮到你，这个调用会阻塞等待\
+                 （最长 55 秒）直到对手行动、游戏结束或超时。返回慢是正常的——不是出错，\
+                 是服务器在等你对面的玩家决策。等满 55 秒仍未轮到你时，返回的提示会告诉你\
+                 继续等还是就此打住。** 必须带上你的 player_index 和 player_token。",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "player_index": seat,
+                        "player_token": token,
+                        "timeout": {
+                            "type": "integer",
+                            "description": "本次最多阻塞多少秒，缺省 55，上限 55",
+                            "default": 55,
+                            "maximum": 55,
+                        },
+                    },
+                    "required": ["player_index", "player_token"],
+                }),
+            ),
+            ToolSpec::new(
+                "liars_dice_bid",
+                "在大话骰中叫数。宣称全场至少有多少颗某个点数的骰子。数量不能超过场上骰子\
+                 总数，面值 1-6，且必须比上家大。可选附带一句话 bluff 或误导对手。",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "player_index": seat,
+                        "player_token": token,
+                        "quantity": {
+                            "type": "integer",
+                            "description": "数量（≥1，且不超过场上骰子总数）",
+                            "minimum": 1,
+                        },
+                        "face": {
+                            "type": "integer",
+                            "description": "面值 1-6",
+                            "minimum": 1,
+                            "maximum": 6,
+                        },
+                        "message": {
+                            "type": "string",
+                            "description": "可选: bluff/误导信息",
+                        },
+                    },
+                    "required": ["player_index", "player_token", "quantity", "face"],
+                }),
+            ),
+            ToolSpec::new(
+                "liars_dice_challenge",
+                "在大话骰中开盅（挑战上家的叫数）。所有人揭骰验证。不能开自己的盅。\
+                 必须带上你的 player_index 和 player_token。",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "player_index": seat,
+                        "player_token": token,
+                    },
+                    "required": ["player_index", "player_token"],
+                }),
+            ),
+        ]
+    }
 }
 
 #[cfg(test)]

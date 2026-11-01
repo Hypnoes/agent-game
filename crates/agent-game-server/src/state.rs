@@ -98,9 +98,30 @@ impl AppState {
     }
 }
 
-/// 指定提示词目录。
+/// 指定提示词目录，并**立即应用到所有引擎的模板仓库**。
+///
+/// 只把路径存进 `AppState` 是空操作——引擎读的是自己那份进程级共享的
+/// `PromptStore`，它不会去看 `AppState`。这里必须真的把它们连起来，
+/// 否则 `--prompt-dir` 这个启动参数在行为上等于不存在。
 pub fn set_prompt_dir(state: &mut AppState, dir: PathBuf) {
     state.prompt_dir = Some(Arc::new(dir));
+    apply_prompt_dir(state);
+}
+
+/// 把 `AppState` 上的提示词目录同步到每个引擎的 `PromptStore`。
+///
+/// 引擎的仓库是 `OnceLock` 共享的（每个引擎类型一份），所以这项设置对
+/// 已经在跑的对局同样生效。
+fn apply_prompt_dir(state: &AppState) {
+    let dir: Option<PathBuf> = state.prompt_dir.as_deref().cloned();
+    for (_game_type, meta) in state.manager.registry().iter() {
+        if let Ok(engine) = (meta.factory)(
+            &agent_game_server_core::CreateParams::default(),
+            &state.config,
+        ) {
+            engine.prompts().set_dir(dir.clone());
+        }
+    }
 }
 
 /// 重载所有引擎的提示词模板，返回被重载的游戏类型。

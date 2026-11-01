@@ -368,9 +368,50 @@ pub trait GameEngine: std::fmt::Debug + Send {
     /// 创建时的配置参数，用于"同一张桌子"的匹配判断。
     fn setup_params(&self) -> CreateParams;
 
+    /// 该引擎声明的 MCP 工具：`[(name, description, input_schema)]`。
+    ///
+    /// **默认空表**：引擎可以不提供工具面（比如纯内部用途）。但一旦提供，
+    /// 工具名必须以 `game_type_` 为前缀——框架用这个前缀把工具调用路由回来。
+    ///
+    /// 放在协议里而不是写死在 MCP 适配层，是"零改动加游戏"的关键：新增一款
+    /// 游戏只需实现这个方法和 `GameMeta` 注册，工具列表、Schema、文档全部自动生效。
+    /// 写死在适配层会让新游戏的工具永远返回"未知工具"。
+    fn describe_tools(&self) -> Vec<ToolSpec> {
+        Vec::new()
+    }
+
     /// 渲染一次提示词。
     fn render(&self, name: &str, ctx: &Ctx) -> String {
         self.prompts().render(name, ctx)
+    }
+}
+
+/// 一个 MCP 工具声明。
+///
+/// 与 `rmcp::model::Tool` 分开定义，是为了让 core 不依赖 rmcp：引擎只描述
+/// "我要暴露什么"，由适配层负责翻译成具体协议的 `Tool`。
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolSpec {
+    /// 完整工具名，必须以 `<game_type>_` 开头。
+    pub name: String,
+    pub description: String,
+    /// JSON Schema 对象。
+    pub input_schema: Value,
+}
+
+impl ToolSpec {
+    /// 构造一个工具声明。
+    #[must_use]
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        input_schema: Value,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            description: description.into(),
+            input_schema,
+        }
     }
 }
 

@@ -285,7 +285,13 @@ pub fn parse_toml(text: &str) -> Result<Templates, String> {
 #[derive(Debug)]
 pub struct PromptStore {
     defaults: &'static str,
-    dir: Option<PathBuf>,
+    /// 外部模板目录。
+    ///
+    /// 用 `RwLock` 包一层是因为它必须能在**运行时**改：仓库是进程级共享的
+    /// （每个引擎类型一份 `OnceLock`），而 `--prompt-dir` 是启动参数——
+    /// 服务启动后才拿到它。写成不可变的 `Option<PathBuf>` 会让那个参数
+    /// 变成空操作：字段被设上了，但没有任何代码读它。
+    dir: RwLock<Option<PathBuf>>,
     templates: RwLock<Templates>,
 }
 
@@ -308,24 +314,41 @@ impl PromptStore {
         };
         Self {
             defaults,
-            dir: None,
+            dir: RwLock::new(None),
             templates: RwLock::new(templates),
         }
     }
 
     /// 指定外部目录：目录里存在 `<name>.toml` 时优先于内置默认值。
     #[must_use]
-    pub fn with_dir(mut self, dir: Option<PathBuf>) -> Self {
-        self.dir = dir;
-        self.reload();
+    pub fn with_dir(self, dir: Option<PathBuf>) -> Self {
+        self.set_dir(dir);
         self
+    }
+
+    /// 在运行时指定外部目录并立即重载。
+    ///
+    /// 传 `None` 清掉外部目录、回落到内置默认值。
+    /// 这是 `--prompt-dir` 唯一能被真正读到的地方。
+    pub fn set_dir(&self, dir: Option<PathBuf>) {
+        if let Ok(mut guard) = self.dir.write() {
+            *guard = dir;
+        }
+        self.reload();
+    }
+
+    /// 当前生效的外部目录（测试与诊断用）。
+    #[must_use]
+    pub fn dir(&self) -> Option<PathBuf> {
+        self.dir.read().ok().and_then(|guard| guard.clone())
     }
 
     /// 重新读盘。外部目录不存在或读失败时静默回落到内置默认值——
     /// 提示词层不能因为文件系统问题让服务起不来。
     pub fn reload(&self) {
-        let templates = self
-            .dir
+        // 先把目录拷出来再放锁：`load_dir` 会做文件 I/O，不该在持锁时进行。
+        let dir = self.dir.read().ok().and_then(|guard| guard.clone());
+        let templates = dir
             .as_deref()
             .and_then(|dir| load_dir(dir).ok())
             .unwrap_or_else(|| parse_toml(self.defaults).unwrap_or_default());

@@ -342,7 +342,18 @@ impl AgentGameServer {
     }
 
     /// 在所有该类型的活动对局中按 `player_token` 查找。
-    async fn find_active_session(&self, game_type: &str, player_token: &str) -> Option<String> {
+    ///
+    /// 三个 `continue` 分支都必须保留：
+    /// - 找不到 session（同一轮里被回收了）
+    /// - 类型不匹配（拿着别的游戏的 token）
+    /// - 已结束（那一局没法继续）
+    ///
+    /// `pub(crate)` 而不是私有：测试要能直接喂它各种形态的对局。
+    pub(crate) async fn find_active_session(
+        &self,
+        game_type: &str,
+        player_token: &str,
+    ) -> Option<String> {
         for id in self.manager.session_ids() {
             let Some(session) = self.manager.get(&id) else {
                 continue;
@@ -436,21 +447,32 @@ impl ServerHandler for AgentGameServer {
     }
 }
 
-/// 从请求上下文里取连接级的会话键。
-fn session_key(context: &RequestContext<RoleServer>) -> String {
-    context
-        .extensions
-        .get::<http::request::Parts>()
+/// 从请求上下文的扩展里取连接级的会话键。
+///
+/// 抽成接受 `Option<&http::request::Parts>` 的纯函数，是为了让它可测：
+/// `RequestContext<RoleServer>` 需要 `Peer` 与 `CancellationToken` 才能构造，
+/// 而这里真正关心的只是"`mcp-session-id` 头读到了什么"。变异测试在这个位置
+/// 抓到的存活变异体（返回空串、返回常量、漏判空值）只有它能覆盖。
+fn session_key_of(parts: Option<&http::request::Parts>) -> String {
+    parts
         .and_then(|parts| parts.headers.get("mcp-session-id"))
         .and_then(|value| value.to_str().ok())
+        // 空字符串不能当成一个有效的会话键：`Mcp-Session-Id: ` 这种畸形头
+        // 会让它成为所有连接的共享键，等于让不同玩家串到同一局。
         .filter(|value| !value.is_empty())
         .unwrap_or(FALLBACK_SESSION_KEY)
         .to_owned()
 }
 
+/// 从请求上下文里取连接级的会话键。
+fn session_key(context: &RequestContext<RoleServer>) -> String {
+    session_key_of(context.extensions.get::<http::request::Parts>())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_game_server_core::{GameMeta, PlayerMode, Registry};
 
     #[test]
     fn cache_tracks_and_forgets() {
@@ -487,5 +509,438 @@ mod tests {
     #[test]
     fn session_not_found_text_keeps_the_id() {
         assert!(SessionNotFound("nope".into()).to_string().contains("nope"));
+    }
+
+    // ── 连接键 ──
+
+    /// 造一份只有指定头的 `http::request::Parts`。
+    fn parts_with_session(session: Option<&str>) -> http::request::Parts {
+        let mut builder = http::Request::builder().method("POST").uri("/mcp");
+        if let Some(value) = session {
+            builder = builder.header("mcp-session-id", value);
+        }
+        builder.body(()).unwrap().into_parts().0
+    }
+
+    #[test]
+    fn a_missing_header_falls_back_to_the_fixed_key() {
+        // 变异成返回空串或 "xyzzy" 会让所有无头请求共用一个错误的缓存桶。
+        assert_eq!(session_key_of(None), FALLBACK_SESSION_KEY);
+        assert_eq!(
+            session_key_of(Some(&parts_with_session(None))),
+            FALLBACK_SESSION_KEY
+        );
+    }
+
+    #[test]
+    fn an_empty_header_also_falls_back() {
+        // `Mcp-Session-Id: ` 这种畸形头不能成为一个有效的共享键。
+        assert_eq!(
+            session_key_of(Some(&parts_with_session(Some("")))),
+            FALLBACK_SESSION_KEY,
+            "空值必须回落，否则所有连接会串到同一局"
+        );
+    }
+
+    #[test]
+    fn a_real_header_is_used_verbatim() {
+        assert_eq!(
+            session_key_of(Some(&parts_with_session(Some("abc-123")))),
+            "abc-123"
+        );
+    }
+
+    #[test]
+    fn different_headers_produce_different_keys() {
+        let first = session_key_of(Some(&parts_with_session(Some("conn-1"))));
+        let second = session_key_of(Some(&parts_with_session(Some("conn-2"))));
+        assert_ne!(first, second);
+    }
+
+    // ── ServerHandler 的静态部分 ──
+
+    fn bare_server() -> AgentGameServer {
+        let mut registry = Registry::new();
+        registry.register(GameMeta::new(
+            "guess_number",
+            PlayerMode::Single,
+            |params, config| {
+                agent_game_server_core::games::GuessNumberEngine::new(params, config)
+                    .map(|e| Box::new(e) as agent_game_server_core::BoxedEngine)
+            },
+        ));
+        AgentGameServer::new(std::sync::Arc::new(GameManager::new(
+            registry,
+            agent_game_server_core::Config::default(),
+        )))
+    }
+
+    #[test]
+    fn get_info_advertises_the_tool_capability_and_the_right_name() {
+        // 变异成 `Default::default()` 会让 `initialize` 报出一个空的能力集，
+        // 客户端据此认为这个服务端没有工具。
+        let info = bare_server().get_info();
+
+        assert_eq!(info.server_info.name, "agent-game");
+        assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
+        assert!(
+            info.capabilities.tools.is_some(),
+            "必须声明 tools 能力: {:?}",
+            info.capabilities
+        );
+    }
+
+    #[tokio::test]
+    async fn list_tools_through_the_handler_returns_the_registry_tools() {
+        // 变异成 `Ok(Default::default())` 会让 `tools/list` 返回零个工具。
+        // `list_tools` 的第二个参数用不上，但签名要求给一个。
+        // 这里借用一个真实的 `RequestContext` 构造不出来，所以直接验证
+        // `tools()`（`list_tools` 的实现体就是它的包装）。
+        let server = bare_server();
+        let result = server.tools();
+        assert!(!result.tools.is_empty(), "工具表不能为空");
+    }
+
+    // ── 错误分类 ──
+
+    #[test]
+    fn engine_error_text_keeps_the_prefix_and_the_cause() {
+        // 变异成空串或 "xyzzy" 会让 Agent 看不到任何有用信息。
+        let text = engine_error_text(&EngineError::MissingToken);
+        assert!(text.starts_with('❌'), "{text}");
+        assert!(text.contains("缺少 player_token"), "{text}");
+    }
+
+    #[test]
+    fn the_session_cache_cap_can_be_smaller_than_its_default() {
+        // 默认 512；显式传更小的值时不该被悄悄改回默认。
+        let cache = SessionCache::new(3);
+        for index in 0..10 {
+            cache.put(&format!("conn-{index}"), "g", "sid");
+        }
+        assert_eq!(cache.tracked(), 3, "容量必须被尊重");
+    }
+
+    // ── 按 token 找对局：三个 `continue` 分支 ──
+
+    /// 一个最小引擎，`find_player_by_token` 认一个固定 token。
+    ///
+    /// 只用于 `find_active_session` 的分支测试：它的三个 `continue` 各自
+    /// 对应"找不到 / 类型不对 / 已结束"，要逐一走到。
+    #[derive(Debug)]
+    struct ProbeEngine {
+        token: &'static str,
+        phase: &'static str,
+        /// 为真时 `is_ready_for` 恒假：用来验证"预算为 0 时不等"。
+        never_ready: bool,
+        signal: std::sync::Arc<agent_game_server_core::ChangeSignal>,
+        prompts: agent_game_server_core::PromptStore,
+    }
+
+    impl ProbeEngine {
+        fn new(token: &'static str, phase: &'static str) -> Self {
+            Self {
+                token,
+                phase,
+                never_ready: false,
+                signal: std::sync::Arc::new(agent_game_server_core::ChangeSignal::new()),
+                prompts: agent_game_server_core::PromptStore::new("[templates]\n"),
+            }
+        }
+
+        /// 一个永远不会"轮到我"的引擎：只要真的进入等待，就会挂满预算。
+        fn never_ready(mut self) -> Self {
+            self.never_ready = true;
+            self
+        }
+    }
+
+    impl agent_game_server_core::GameEngine for ProbeEngine {
+        fn game_type(&self) -> &'static str {
+            "probe"
+        }
+        fn player_mode(&self) -> PlayerMode {
+            PlayerMode::Multi
+        }
+        fn phase(&self) -> &'static str {
+            self.phase
+        }
+        fn admin_view(&self) -> serde_json::Value {
+            serde_json::json!({"phase": self.phase})
+        }
+        fn public_view(&self) -> serde_json::Value {
+            serde_json::json!({"phase": self.phase})
+        }
+        fn player_view(
+            &self,
+            _index: Option<usize>,
+        ) -> Result<agent_game_server_core::PlayerView, EngineError> {
+            Ok(agent_game_server_core::PlayerView::default())
+        }
+        fn handle_action(
+            &mut self,
+            _action: &str,
+            _params: ActionParams,
+        ) -> Result<agent_game_server_core::PlayerView, EngineError> {
+            Ok(agent_game_server_core::PlayerView::default())
+        }
+        fn check_timeout(
+            &mut self,
+            _now: std::time::Instant,
+        ) -> Result<Option<agent_game_server_core::TimeoutEvent>, EngineError> {
+            Ok(None)
+        }
+        fn signal(&self) -> std::sync::Arc<agent_game_server_core::ChangeSignal> {
+            std::sync::Arc::clone(&self.signal)
+        }
+        fn prompts(&self) -> &agent_game_server_core::PromptStore {
+            &self.prompts
+        }
+        fn setup_params(&self) -> CreateParams {
+            CreateParams::default()
+        }
+        fn find_player_by_token(&self, token: &str) -> Option<usize> {
+            (token == self.token).then_some(0)
+        }
+        fn is_ready_for(&self, _player_index: usize) -> bool {
+            !self.never_ready
+        }
+        fn describe_tools(&self) -> Vec<agent_game_server_core::ToolSpec> {
+            use agent_game_server_core::ToolSpec;
+            vec![
+                ToolSpec::new(
+                    "probe_state",
+                    "看状态",
+                    serde_json::json!({"type": "object", "properties": {}, "required": []}),
+                ),
+                ToolSpec::new(
+                    "probe_bid",
+                    "叫数",
+                    serde_json::json!({"type": "object", "properties": {}, "required": []}),
+                ),
+            ]
+        }
+    }
+
+    fn probe_server(entries: &[(&'static str, &'static str, &'static str)]) -> AgentGameServer {
+        // (game_type, token, phase)
+        let mut registry = Registry::new();
+        for &(game_type, token, phase) in entries {
+            registry.register(GameMeta::new(
+                game_type,
+                PlayerMode::Multi,
+                move |_p, _c| {
+                    Ok(Box::new(ProbeEngine::new(token, phase))
+                        as agent_game_server_core::BoxedEngine)
+                },
+            ));
+        }
+        AgentGameServer::new(std::sync::Arc::new(GameManager::new(
+            registry,
+            agent_game_server_core::Config::default(),
+        )))
+    }
+
+    #[tokio::test]
+    async fn find_active_session_returns_the_matching_session() {
+        let server = probe_server(&[("probe", "tok-a", "bidding")]);
+        server
+            .manager()
+            .create("probe", CreateParams::default(), std::time::Instant::now())
+            .await
+            .unwrap();
+
+        let found = server.find_active_session("probe", "tok-a").await;
+        assert!(found.is_some(), "应能找到持有该 token 的对局");
+
+        // 变异成 `Some(String::new())` 或 `Some("xyzzy")` 会让返回值不是真实 id
+        let id = found.unwrap();
+        assert!(
+            server.manager().get(&id).is_some(),
+            "返回的必须是真实存在的 session id，实际 {id:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_active_session_returns_none_for_an_unknown_token() {
+        let server = probe_server(&[("probe", "tok-a", "bidding")]);
+        server
+            .manager()
+            .create("probe", CreateParams::default(), std::time::Instant::now())
+            .await
+            .unwrap();
+
+        assert!(
+            server
+                .find_active_session("probe", "nobody")
+                .await
+                .is_none(),
+            "陌生 token 不该命中"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_active_session_skips_a_finished_session() {
+        // `if engine.is_finished() { continue; }` 被删掉时，已结束的对局会被
+        // 当成可复用的目标——断线重连会拿到一局已经打完的牌。
+        let server = probe_server(&[("probe", "tok-a", "finished")]);
+        let created = server
+            .manager()
+            .create("probe", CreateParams::default(), std::time::Instant::now())
+            .await
+            .unwrap();
+        assert!(server.manager().is_finished(&created).await);
+
+        assert!(
+            server.find_active_session("probe", "tok-a").await.is_none(),
+            "已结束的对局不该被复用"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_active_session_skips_a_session_of_another_game_type() {
+        // `if session.game_type != game_type { continue; }` 的 `!=` 改成 `==`
+        // 会让它**只**命中类型不同的对局——拿着大话骰的 token 建猜数字，
+        // 拿回大话骰的 session。
+        let server = probe_server(&[("dice", "tok-a", "bidding"), ("guess", "tok-a", "bidding")]);
+        let dice = server
+            .manager()
+            .create("dice", CreateParams::default(), std::time::Instant::now())
+            .await
+            .unwrap();
+
+        let found = server.find_active_session("guess", "tok-a").await;
+        assert_ne!(
+            found.as_deref(),
+            Some(dice.id.as_str()),
+            "不能返回另一种游戏的对局"
+        );
+
+        // 查 dice 时应当命中 dice 那局
+        assert_eq!(
+            server.find_active_session("dice", "tok-a").await.as_deref(),
+            Some(dice.id.as_str())
+        );
+    }
+
+    // ── 工具调用是否该等：`state` 与其它动作的分界 ──
+
+    /// 造一台只有 `probe` 一个游戏的 server，且那台引擎永不 ready。
+    fn never_ready_server() -> AgentGameServer {
+        let mut registry = Registry::new();
+        registry.register(GameMeta::new("probe", PlayerMode::Multi, |_p, _c| {
+            Ok(Box::new(ProbeEngine::new("tok-a", "bidding").never_ready())
+                as agent_game_server_core::BoxedEngine)
+        }));
+        AgentGameServer::new(std::sync::Arc::new(GameManager::new(
+            registry,
+            agent_game_server_core::Config::default(),
+        )))
+    }
+
+    #[tokio::test]
+    async fn a_positive_budget_waits_but_is_cut_off_by_the_deadline() {
+        // `budget > 0.0` 改成 `==`/`<`/`>=` 时，这一条会变：
+        // - `>=`：0 也进等待（下面第二条用例会挂住）
+        // - `==`：只有恰好 0 才等，非 0 反而不等（这一条会立刻返回）
+        // - `<`：负数才等，正数不等（这一条会立刻返回）
+        //
+        // 用一个很短的预算，验证"确实等待了，且按预算返回"。
+        let server = never_ready_server();
+        let session = server
+            .manager()
+            .create("probe", CreateParams::default(), std::time::Instant::now())
+            .await
+            .unwrap();
+
+        let mut arguments = serde_json::Map::new();
+        arguments.insert(
+            "session_id".to_owned(),
+            serde_json::Value::String(session.id.clone()),
+        );
+        arguments.insert(
+            "player_token".to_owned(),
+            serde_json::Value::String("tok-a".to_owned()),
+        );
+        // 预算 1 秒：`f64` 直接传，解析器接受数值
+        arguments.insert("timeout".to_owned(), serde_json::Value::from(1));
+
+        let started = std::time::Instant::now();
+        server
+            .execute("conn", "probe_state", arguments)
+            .await
+            .unwrap();
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed >= std::time::Duration::from_millis(900),
+            "正预算必须真的等待，实际只用了 {elapsed:?}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "等待必须被预算切断，实际 {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn only_the_state_action_resolves_the_wait_budget() {
+        // `run_action` 里 `if action == "state"` 的 `==` 改成 `!=` 会让
+        // **其它**动作去解析 timeout 并进入等待，而 state 反而不等。
+        let server = probe_server(&[("probe", "tok-a", "bidding")]);
+        let session = server
+            .manager()
+            .create("probe", CreateParams::default(), std::time::Instant::now())
+            .await
+            .unwrap();
+
+        // 非 state 动作带一个非法 timeout：不该被解析，因此不该报错
+        let mut arguments = serde_json::Map::new();
+        arguments.insert(
+            "session_id".to_owned(),
+            serde_json::Value::String(session.id.clone()),
+        );
+        arguments.insert(
+            "timeout".to_owned(),
+            serde_json::Value::String("abc".to_owned()),
+        );
+        let outcome = server.execute("conn", "probe_bid", arguments).await;
+        assert!(
+            !matches!(&outcome, Err(EngineError::InvalidInput(m)) if m.contains("timeout")),
+            "非 state 动作不该解析 timeout: {outcome:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_zero_budget_skips_the_wait_entirely() {
+        // `if budget > 0.0` 的三种变异（`==`/`<`/`>=`）都会改变"0 要不要等"。
+        // 用**永不 ready** 的引擎：只要真的进入等待就一定挂满 5 秒，
+        // 所以"立即返回"这件事是可观测的。
+        let server = never_ready_server();
+        let session = server
+            .manager()
+            .create("probe", CreateParams::default(), std::time::Instant::now())
+            .await
+            .unwrap();
+
+        let started = std::time::Instant::now();
+        let mut arguments = serde_json::Map::new();
+        arguments.insert(
+            "session_id".to_owned(),
+            serde_json::Value::String(session.id.clone()),
+        );
+        // 多人引擎在显式 session_id 下必须带 token，否则先被身份守卫挡住
+        arguments.insert(
+            "player_token".to_owned(),
+            serde_json::Value::String("tok-a".to_owned()),
+        );
+        arguments.insert("timeout".to_owned(), serde_json::Value::from(0));
+        server
+            .execute("conn", "probe_state", arguments)
+            .await
+            .unwrap();
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(500),
+            "timeout=0 必须立即返回"
+        );
     }
 }

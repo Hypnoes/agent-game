@@ -77,12 +77,24 @@ impl Cli {
 /// 解析 admin token：有环境变量就用它，否则随机生成。
 ///
 /// 绝不退化成"没配就不校验"——那会让 `/api/v1/admin/games` 对任何能连上端口的人
-/// 敞开全部秘密信息。随机生成的分支由 [`print_banner`] 打印出来，
+/// 敞开全部秘密信息。随机生成的分支由 [`banner`] 打印出来，
 /// 那是运维拿到它的唯一途径。
 #[must_use]
 pub fn resolve_admin_token() -> (String, bool) {
-    match std::env::var("AGENT_GAME_ADMIN_TOKEN") {
-        Ok(token) if !token.is_empty() => (token, false),
+    resolve_admin_token_from(std::env::var("AGENT_GAME_ADMIN_TOKEN").ok())
+}
+
+/// [`resolve_admin_token`] 的纯函数版本：只决定"给定这个配置值该用什么 token"。
+///
+/// 抽出来是为了可测：`std::env::set_var` 在 Rust 2024 里是 `unsafe`
+/// （并发读写环境变量有数据竞争），而本 workspace 禁止 `unsafe`。
+/// 把决策与读取分开之后，两个分支都能用普通值直接覆盖。
+#[must_use]
+fn resolve_admin_token_from(configured: Option<String>) -> (String, bool) {
+    match configured {
+        // 空字符串不算"配置了"：`AGENT_GAME_ADMIN_TOKEN=` 是常见的
+        // "我设了但忘了填" 形态，此时必须回落到随机值。
+        Some(token) if !token.is_empty() => (token, false),
         _ => (random_token(), true),
     }
 }
@@ -123,6 +135,18 @@ pub fn banner(addr: &SocketAddr, token: &str, generated: bool) -> String {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 子进程模式：只解析一次 token 然后打印，不起服务。
+    //
+    // 这是唯一能验证"`resolve_admin_token` 真的读了环境变量"的办法：
+    // `std::env::set_var` 在 Rust 2024 里是 `unsafe`，而本 workspace 禁止
+    // `unsafe`。子进程可以干净地控制自己的环境。见 `token_env_tests`。
+    if std::env::var("AGENT_GAME_TEST_PRINT_TOKEN").is_ok() {
+        let (token, generated) = resolve_admin_token();
+        println!("token={token}");
+        println!("generated={generated}");
+        return Ok(());
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -207,6 +231,33 @@ mod tests {
         assert_ne!(first, second);
     }
 
+    #[test]
+    fn a_configured_token_is_used_verbatim_and_reported_as_not_generated() {
+        // 这两个变异体（返回 "xyzzy"）只有在真的走到"已配置"分支时才杀掉。
+        let (token, generated) = resolve_admin_token_from(Some("configured-token-123".to_owned()));
+        assert_eq!(token, "configured-token-123", "必须原样返回配置的 token");
+        assert!(!generated, "配置来的不该标成随机生成");
+    }
+
+    #[test]
+    fn an_empty_configuration_falls_back_to_a_generated_token() {
+        // `Some(token) if !token.is_empty()` 的 `!` 被删掉会让空字符串被当成
+        // "已配置"——那等于 admin 接口用空 token 就能通过。
+        let (token, generated) = resolve_admin_token_from(Some(String::new()));
+        assert!(!token.is_empty(), "空配置必须回落到随机 token");
+        assert_eq!(token.len(), 48, "回落值应当是一个随机 token");
+        assert!(generated, "回落值必须标成随机生成");
+    }
+
+    #[test]
+    fn a_missing_configuration_generates_a_token() {
+        let (token, generated) = resolve_admin_token_from(None);
+        assert_eq!(token.len(), 48);
+        assert!(generated);
+        // 两次生成不该相同
+        let (other, _) = resolve_admin_token_from(None);
+        assert_ne!(token, other);
+    }
     #[test]
     fn config_honours_the_flags() {
         let cli = Cli::parse_from([

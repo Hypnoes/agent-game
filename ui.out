@@ -1,0 +1,6 @@
+🎮 agent-game starting...
+   Game API:   http://localhost:18901
+   Admin:      http://localhost:18901/admin?token=ui-test-token
+   Admin 查询头: X-Admin-Token: ui-test-token
+   MCP:        http://localhost:18901/mcp
+   Admin token 来自 AGENT_GAME_ADMIN_TOKEN

@@ -13,7 +13,7 @@ name = "agent-game-server"
 path = "src/main.rs"
 
 [dependencies]
-agent-game-server-core.workspace = true
+agent-game-server-core = { workspace = true, features = ["testing"] }
 rand_chacha.workspace = true
 agent-game-server-mcp.workspace = true
 axum.workspace = true
