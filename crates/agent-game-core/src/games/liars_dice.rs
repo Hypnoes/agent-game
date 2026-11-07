@@ -27,12 +27,12 @@ use rand::RngExt as _;
 use serde_json::Value;
 
 use crate::domain::game::{GameEngine, PlayerMode, PlayerView, TimeoutEvent};
-use crate::infra::config::Config;
-use crate::infra::error::EngineError;
-use crate::infra::identity::check_player_identity;
-use crate::infra::params::{ActionParams, CreateParams};
-use crate::infra::prompt::{Ctx, PromptStore};
-use crate::infra::signal::ChangeSignal;
+use agent_game_server_infra::config::Config;
+use agent_game_server_infra::error::EngineError;
+use agent_game_server_infra::identity::check_player_identity;
+use agent_game_server_infra::params::{ActionParams, CreateParams};
+use agent_game_server_infra::prompt::{Ctx, PromptStore};
+use agent_game_server_infra::signal::ChangeSignal;
 
 const PROMPT_TOML: &str = include_str!("../../assets/liars_dice_prompts.toml");
 
@@ -64,7 +64,7 @@ impl Player {
     }
 }
 
-impl crate::infra::identity::PlayerIdentity for Player {
+impl agent_game_server_infra::identity::PlayerIdentity for Player {
     fn token(&self) -> &str {
         &self.token
     }
@@ -313,7 +313,7 @@ impl LiarsDiceEngine {
 
     /// 校验身份：索引合法 + token 匹配。
     ///
-    /// 校验本身在 [`crate::infra::identity::check_player_identity`]——REST 与 MCP 两条
+    /// 校验本身在 [`agent_game_server_infra::identity::check_player_identity`]——REST 与 MCP 两条
     /// 传输共用同一份判断。这里只负责把"通过"翻译成可用的索引。
     fn validate_player(
         &self,

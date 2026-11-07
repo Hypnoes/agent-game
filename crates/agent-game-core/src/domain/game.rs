@@ -7,7 +7,7 @@
 //!    `{k: v for k, v in state.items() if k not in secrets}`：秘密名单里
 //!    拼错一个字母（`all_dices`），秘密就原样漏给 Agent，运行期没有任何反应。
 //!    改成构造之后，写漏一个字段的后果是"测试红"，不是"静默泄密"。
-//! 2. **纯同步**。等待语义上移到框架的 [`crate::infra::wait`]，引擎只回答
+//! 2. **纯同步**。等待语义上移到框架的 [`agent_game_server_infra::wait`]，引擎只回答
 //!    "现在轮到他了吗"与"变了就叫我"。于是 `dyn GameEngine` 可以直接用，
 //!    不需要 `async-trait`、不需要 `Box<dyn Future>`。
 //! 3. **`check_timeout` 返回 `Result`**。布尔返回值无法区分"没事"与"我坏了"，
@@ -20,10 +20,10 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-use crate::infra::error::EngineError;
-use crate::infra::params::{ActionParams, CreateParams};
-use crate::infra::prompt::{Ctx, PromptStore};
-use crate::infra::signal::ChangeSignal;
+use agent_game_server_infra::error::EngineError;
+use agent_game_server_infra::params::{ActionParams, CreateParams};
+use agent_game_server_infra::prompt::{Ctx, PromptStore};
+use agent_game_server_infra::signal::ChangeSignal;
 
 /// 引擎没有声明时的默认终态名。
 pub const DEFAULT_FINISHED_STATES: &[&str] = &["finished", "won", "lost"];
@@ -120,7 +120,7 @@ impl TimeoutEvent {
 /// 引擎协议。
 ///
 /// 所有方法都是同步的；需要等待的能力由 [`GameEngine::signal`] 与
-/// [`GameEngine::is_ready_for`] 提供，循环在 [`crate::infra::wait::wait_for`]。
+/// [`GameEngine::is_ready_for`] 提供，循环在 [`agent_game_server_infra::wait::wait_for`]。
 pub trait GameEngine: std::fmt::Debug + Send {
     /// 机器键。必须与注册表里的键一致，也是 MCP 工具名前缀。
     fn game_type(&self) -> &'static str;

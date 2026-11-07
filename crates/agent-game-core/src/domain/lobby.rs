@@ -15,7 +15,7 @@ use serde_json::Value;
 
 use crate::domain::session::{Session, SessionId};
 use crate::domain::supervisor::GameManager;
-use crate::infra::params::CreateParams;
+use agent_game_server_infra::params::CreateParams;
 
 impl GameManager {
     /// 创建或复用一个 session。

@@ -8,7 +8,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::domain::game::BoxedEngine;
 use crate::domain::registry::GameMeta;
-use crate::infra::params::CreateParams;
+use agent_game_server_infra::params::CreateParams;
 
 /// session 标识：UUID v4 的前 8 个字符。
 pub type SessionId = String;

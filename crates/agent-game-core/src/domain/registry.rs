@@ -17,8 +17,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::domain::game::{BoxedEngine, PlayerMode};
-use crate::infra::config::Config;
-use crate::infra::params::CreateParams;
+use agent_game_server_infra::config::Config;
+use agent_game_server_infra::params::CreateParams;
 
 /// 一个已经注册的游戏。
 #[derive(Clone)]

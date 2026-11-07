@@ -76,6 +76,9 @@ jobs:
       - uses: taiki-e/install-action@cargo-mutants
 
       - name: 变异测试（core）
-        # 只对 core 做全量：规则、预算、身份、等待都在这里，是"必须被守住"
-        # 的那一层。server/mcp 两层的传输行为已由集成测试覆盖，全量跑代价过高。
-        run: cargo mutants -p agent-game-server-core --config .config/mutants.toml
+        # 只对 core 与 infra 做全量：规则、预算、身份、等待都在这里，是"必须被
+        # 守住"的那两层。server/mcp 两层的传输行为已由集成测试覆盖，全量跑代价过高。
+        #
+        # `-p` 可以写多次。infra 拆出去之后，"预算解析 / 提示词渲染"这些必须被
+        # 守住的规则跟着搬走了，漏掉它等于少跑一半的看门。
+        run: cargo mutants -p agent-game-server-core -p agent-game-server-infra --config .config/mutants.toml

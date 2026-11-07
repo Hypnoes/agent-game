@@ -3,14 +3,14 @@
 # 变异测试问的是"测试有没有用"：往源码注入一个真实缺陷，套件会不会红。
 # 覆盖率做不到这件事——它只说明"这行被跑过"。
 #
-# 只变异 core：规则、预算、身份、等待原语都在这里，是"必须被守住"的那一层。
-# server 与 mcp 的传输行为由集成测试（真实 HTTP 往返）覆盖。
+# 只变异 core 与 infra：规则、预算、身份、等待原语都在这里，是"必须被守住"的
+# 那一层。server 与 mcp 的传输行为由集成测试（真实 HTTP 往返）覆盖。
 exclude_globs = [
     # 测试替身：它本身不是被测代码。改坏它的返回值只会改坏测试自己的期望，
     # 不改变被测代码的行为，所以这里的"存活"不说明任何问题。
-    "crates/agent-game-core/src/testing.rs",
+    "crates/agent-game-core/src/domain/testing.rs",
     # 纯数据资产：提示词文本，没有逻辑可变异
-    "crates/agent-game-core/src/assets/*",
+    "crates/agent-game-core/assets/*",
 ]
 
 # 已知等价变异体：改了代码但行为确实不变，不算缺口。

@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use crate::infra::error::EngineError;
+use crate::error::EngineError;
 
 /// 动作参数。`timeout` 在这里已经被剥掉——它只属于传输层的等待预算。
 #[derive(Clone, Debug, Default)]

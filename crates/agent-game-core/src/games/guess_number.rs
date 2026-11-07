@@ -14,11 +14,11 @@ use serde_json::Value;
 use crate::domain::game::{
     DEFAULT_FINISHED_STATES, GameEngine, PlayerMode, PlayerView, TimeoutEvent,
 };
-use crate::infra::config::Config;
-use crate::infra::error::EngineError;
-use crate::infra::params::{ActionParams, CreateParams};
-use crate::infra::prompt::{Ctx, PromptStore};
-use crate::infra::signal::ChangeSignal;
+use agent_game_server_infra::config::Config;
+use agent_game_server_infra::error::EngineError;
+use agent_game_server_infra::params::{ActionParams, CreateParams};
+use agent_game_server_infra::prompt::{Ctx, PromptStore};
+use agent_game_server_infra::signal::ChangeSignal;
 
 const PROMPT_TOML: &str = include_str!("../../assets/guess_number_prompts.toml");
 

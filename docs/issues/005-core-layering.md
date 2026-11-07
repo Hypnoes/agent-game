@@ -1,4 +1,4 @@
-# core 按 infra/domain/games 三层重排目录
+# core 按 infra/domain/games 重排目录，并把 infra 抽成独立 crate
 
 | 项 | 值 |
 |---|---|
@@ -72,23 +72,15 @@ games/*.rs     (1529 行生产)        → config, engine, error, identity, prom
 按 `infra → domain → games` 三层重排目录，让依赖方向**可见且可测试**。
 
 ```
-crates/agent-game-core/src/
-├─ lib.rs              只有 re-export + 分层文档
-├─ domain/             你说的三个概念落在这里
-│   ├─ game.rs         GameAbstraction：trait + 4 个 DTO
-│   ├─ lobby.rs        Lobby：匹配（重连 / 并桌 / 新建）
-│   ├─ session.rs      Session 生命周期
-│   ├─ snapshot.rs     SessionSnapshot / TimeoutRecord
-│   └─ supervisor.rs   GameManager 剩余：动作分发 + 超时结算
-├─ games/              GameImpl（不动，仅改 use 路径）
-│   ├─ liars_dice.rs
-│   └─ guess_number.rs
-└─ infra/              被所有人 use、自己不 use 上层
-    ├─ params/         从 engine.rs 抽出 ~250 行
-    │   ├─ create.rs
-    │   └─ action.rs
-    ├─ budget.rs   config.rs   error.rs   signal.rs   wait.rs
-    ├─ prompt.rs   identity.rs registry.rs
+crates/agent-game-infra/          ← 独立 crate，不依赖 core
+├─ budget.rs  config.rs  error.rs  identity.rs
+├─ prompt.rs  signal.rs  wait.rs
+└─ params/{create,action}.rs      从 engine.rs 抽出 ~250 行
+
+crates/agent-game-core/src/       ← 依赖 infra
+├─ lib.rs               re-export + 分层文档 + 兼容路径
+├─ domain/              GameAbstraction / Lobby / Session / Snapshot / Supervisor
+└─ games/               GameImpl（仅改 use 路径）
 ```
 
 ## 设计
@@ -102,14 +94,34 @@ crates/agent-game-core/src/
 哪一行是"跟着移动走的"、哪一行是"真的改了行为"。语义问题（`alive` 与 `dice`
 双真相、`Call` 的哨兵值、`phase` 字符串）由 008/009 单独处理。
 
-### 约束二：分层要可执行，不只是文档
+### 约束二：分层边界用 crate，不用扫描器
 
-单靠目录名和一段说明，下一个人仍可能从 `infra/` 里 `use crate::domain`。
-新增 `tests/layering.rs`：解析 `infra/` 下每个 `.rs` 的源码，断言其中不出现
-`use crate::domain` 或 `use crate::games`。
+最初 `infra` 是 `core` 里的一个目录，方向由 `tests/layering.rs` 读源码文本来守。
+这条路被 review 连续三代找到绕过写法，每一代都合法可编译却漏检：
 
-这让 AGENTS.md 可以新增一条**有看门用例的**约束，而不是又一段无人执行的注释
-（对应 AGENTS.md 第 14 条：每条约束都要有对应的看门用例）。
+| 代 | 写法 | 为什么漏 |
+|---|---|---|
+| 1 | `pub(crate) use crate::domain::X;` | 不以 `use ` 开头 |
+| 1 | `use crate::domain as dom;` | 别名 |
+| 1 | `use crate::{domain::X};` | 分组导入 |
+| 2 | `pub(in crate::infra) use crate::domain::X;` | 可见性修饰 |
+| 2 | `use crate::{infra::X, domain};` | 分组里的裸模块项 |
+| 3 | `use super::super::domain::game::X;` | 相对路径 |
+| 3 | `use crate :: domain :: game :: X;` | token 间空格 |
+| 3 | `fn f(_: crate::domain::game::X) {}` | 根本不是 `use` |
+
+字符串匹配无法穷尽一种语言的模块引用语法。**所以 `infra` 被抽成独立 crate**：
+它不依赖 `agent-game-core`，反向依赖会让 cargo 在循环依赖检查处直接失败：
+
+```
+error: cyclic package dependency: package `agent-game-server-core` depends on itself
+```
+
+这样约束由编译器执行，不存在"漏检某种写法"的余地。
+
+`domain → games` 仍用扫描器（两者都在 `core` 里，单独抽 crate 成本不抵收益），
+但它现在的盲区被**显式写成用例**（`known_gap_expression_paths_are_not_scanned`），
+而不是假装不存在。
 
 ### 约束三：顺带降 trait 默认实现
 
@@ -129,11 +141,11 @@ crates/agent-game-core/src/
 
 | 用例 | 位置 | 断言 |
 |---|---|---|
-| `infra_never_depends_on_domain` | `tests/layering.rs` | `infra/*.rs` 无对 `domain` 的依赖 |
-| `infra_never_depends_on_games` | `tests/layering.rs` | `infra/*.rs` 无对 `games` 的依赖 |
+| `infra_crate_does_not_depend_on_core` | `tests/layering.rs` | infra 的 manifest 里没有 core（真正执行者是 cargo） |
 | `domain_never_depends_on_games` | `tests/layering.rs` | `domain/*.rs` 无对 `games` 的依赖 |
-| `the_guard_actually_detects_a_violation` | `tests/layering.rs` | 反向验证：同一检查函数必须能抓到 `games` 的真实依赖 |
-| `the_guard_catches_*`（4 条） | `tests/layering.rs` | `pub(crate) use`、`as` 别名、分组、跨行分组四种写法 |
+| `the_guard_actually_detects_a_violation` | `tests/layering.rs` | 反向验证：同一检查函数必须能抓到 `games` 对 `domain` 的真实依赖 |
+| `the_guard_catches_*`（7 条） | `tests/layering.rs` | 上表各写法逐条 |
+| `known_gap_expression_paths_are_not_scanned` | `tests/layering.rs` | 盲区显式化：非 `use` 的表达式路径抓不到 |
 | `comments_do_not_create_false_positives` | `tests/layering.rs` | 注释里的 use 不算 |
 | `every_public_module_path_still_resolves` | `tests/api_paths.rs` | 12 个历史模块路径逐个 import |
 | `top_level_reexports_still_resolve` | `tests/api_paths.rs` | 顶层 22 个再导出名字逐个点名 |
@@ -141,7 +153,7 @@ crates/agent-game-core/src/
 
 ## 验收标准
 
-- `cargo test --workspace`：**530 passed**（基线 518 + 10 条分层看门 + 2 条 API 路径）
+- `cargo test --workspace`：**534 passed**（基线 518 + 14 条分层看门 + 2 条 API 路径）
 - `cargo fmt --all -- --check` 零差异
 - `cargo clippy --all-targets -- -D warnings` 零告警
 - `git diff -M --stat` 对全部移动文件识别为 rename
@@ -153,12 +165,15 @@ crates/agent-game-core/src/
 
 | 注入 | 预期 | 实测 |
 |---|---|---|
-| `infra/error.rs` 加 `use crate::domain::game::PlayerMode;` | `layering` 红 | 红 |
-| 同上但写成 `pub(crate) use ...` | 红 | 红 |
-| 同上但写成 `use crate::domain as dom;` | 红 | 红 |
-| 同上但写成 `use crate::{\n domain::X,\n};` | 红 | 红 |
-| `domain/session.rs` 加 `use crate::games::...` | 红 | 红 |
+| `agent-game-infra/Cargo.toml` 加 `agent-game-server-core` 依赖 | `cyclic package dependency` | 拒绝 |
+| 同上 + 源码用 `super::super::domain::` | 拒绝 | 拒绝 |
+| 同上 + 源码用 `crate :: domain ::` | 拒绝 | 拒绝 |
+| 同上 + 源码用 `fn f(_: crate::domain::X)` | 拒绝 | 拒绝 |
+| `domain/session.rs` 加 `use crate::games::...` | `layering` 红 | 红 |
 | 删掉 `lib.rs` 的 `manager` 兼容模块 | `api_paths` 编译失败 | 失败 |
+
+`infra → core` 一栏的三种写法**全部由编译器的循环依赖检查拒绝**——
+这就是抽 crate 的意义：它不区分你用什么语法绕过。
 
 ## 已知边界
 

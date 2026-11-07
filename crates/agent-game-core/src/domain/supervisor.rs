@@ -3,7 +3,7 @@
 //! 三处与 Python 版刻意不同的地方：
 //!
 //! 1. **引擎装在 `tokio::sync::Mutex` 里，持锁不跨 `.await`**。等待路径见
-//!    [`crate::infra::wait`]：取条件、放锁、再等。旧版是单线程 asyncio，一条
+//!    [`agent_game_server_infra::wait`]：取条件、放锁、再等。旧版是单线程 asyncio，一条
 //!    "取状态 → 渲染 → 返回"中间没有 await，天然不会有这种问题；Rust 里必须
 //!    以锁的边界显式表达。
 //! 2. **`check_timeouts` 逐 session 隔离错误**。一个坏引擎返回 `Err` 只影响它
@@ -19,8 +19,8 @@ use std::time::Instant;
 use crate::domain::registry::Registry;
 use crate::domain::session::{Session, SessionId};
 use crate::domain::snapshot::{SessionSnapshot, TimeoutRecord};
-use crate::infra::config::Config;
-use crate::infra::error::SessionNotFound;
+use agent_game_server_infra::config::Config;
+use agent_game_server_infra::error::SessionNotFound;
 
 /// 已上报过的超时事件的缓存上限。
 const MAX_SEEN_EXPIRED: usize = 512;
@@ -281,8 +281,8 @@ impl GameManager {
         &self,
         session: &Arc<Session>,
         action: &str,
-        params: crate::infra::params::ActionParams,
-    ) -> Result<crate::domain::game::PlayerView, crate::infra::error::EngineError> {
+        params: agent_game_server_infra::params::ActionParams,
+    ) -> Result<crate::domain::game::PlayerView, agent_game_server_infra::error::EngineError> {
         let mut engine = session.engine.lock().await;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             engine.handle_action(action, params)
@@ -298,7 +298,7 @@ impl GameManager {
                     action,
                     "引擎在 handle_action 中 panic，对局标记为 poisoned"
                 );
-                Err(crate::infra::error::EngineError::Internal(
+                Err(agent_game_server_infra::error::EngineError::Internal(
                     "引擎在处理动作时崩溃".to_owned(),
                 ))
             }
@@ -315,9 +315,9 @@ mod tests {
     use crate::domain::lobby::{compatible, new_session_id};
     use crate::domain::registry::GameMeta;
     use crate::domain::testing::DummyEngine;
-    use crate::infra::error::EngineError;
-    use crate::infra::params::{ActionParams, CreateParams};
-    use crate::infra::signal::ChangeSignal;
+    use agent_game_server_infra::error::EngineError;
+    use agent_game_server_infra::params::{ActionParams, CreateParams};
+    use agent_game_server_infra::signal::ChangeSignal;
     use serde_json::Value;
 
     fn meta(game_type: &'static str, mode: PlayerMode, phase: &'static str) -> GameMeta {

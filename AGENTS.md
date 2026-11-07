@@ -254,54 +254,59 @@ Rust 里没有 `skip` 这个概念（`#[ignore]` 只用于"慢"，不用于"能�
 
 ---
 
-## 16. `core` 的依赖方向必须单向：`games → domain → infra`
+## 16. 依赖方向必须单向：`games → domain → infra`，且 `infra` 是独立 crate
 
-`crates/agent-game-core/src` 分三层，依赖只能向上：
+工作区四层，依赖只能向上：
 
-| 层 | 放什么 | 不许依赖 |
+| crate | 放什么 | 不许依赖 |
 |---|---|---|
-| `infra/` | 预算、配置、错误、信号、等待、提示词、身份、参数解析 | `domain`、`games` |
-| `domain/` | 引擎协议（`GameAbstraction`）、大厅匹配（`Lobby`）、会话生命周期、注册表、测试替身 | `games` |
-| `games/` | 具体规则（`GameImpl`） | — |
+| `agent-game-infra` | 预算、配置、错误、信号、等待、提示词、身份、参数解析 | `core` |
+| `agent-game-core` `domain/` | 引擎协议（`GameAbstraction`）、大厅匹配（`Lobby`）、会话生命周期、注册表、测试替身 | `games` |
+| `agent-game-core` `games/` | 具体规则（`GameImpl`） | — |
 
-**为什么需要这条**：目录结构本身不会阻止下一个人从 `infra/error.rs` 里
-`use crate::domain::...`。一旦发生，底层就开始认识上层，"把某个模块单独复用"
-或"替换掉某个上层"都要先拆一圈反向依赖才做得到。
+**`infra` 与 `core` 之间的方向由编译器强制。** `agent-game-infra` 的
+`Cargo.toml` 里没有 `agent-game-server-core`；任何反向依赖都会让 cargo 在
+循环依赖检查处直接失败：
 
-**症状（重排时真实发生过一次）**：`registry.rs` 与 `testing.rs` 最初被放进
-`infra/`，但它们实现/持有 `GameEngine`，于是 `infra` 反过来依赖了 `domain`。
-看门用例第一次运行就抓到了这两处，随之把它们移到 `domain/`。
+```
+error: cyclic package dependency: package `agent-game-server-core` depends on itself
+```
 
-**现在**：`tests/layering.rs` 读源码文本并**先归一化**（去注释、合并跨行与花括号
-分组），再判断每条 use 语句引用了哪些层。三条禁止：`infra → domain`、
-`infra → games`、`domain → games`。
+这一条**不能**靠源码扫描做到。历史经过三代绕过，每一代都合法可编译却漏检：
 
-**为什么不能逐行前缀匹配**：第一版就是那么写的，被 review 抓出四种漏检写法，
-每一种都能让 `infra` 依赖 `domain` 而看门全绿：
+| 代 | 写法 | 为什么扫描器漏 |
+|---|---|---|
+| 1 | `pub(crate) use crate::domain::X;` | 不以 `use ` 开头 |
+| 1 | `use crate::domain as dom;` | 别名，不是 `::` 后缀 |
+| 1 | `use crate::{domain::X};` | 分组导入 |
+| 2 | `pub(in crate::infra) use crate::domain::X;` | 可见性修饰更复杂 |
+| 2 | `use crate::{infra::X, domain};` | 分组里的裸模块项 |
+| 3 | `use super::super::domain::game::X;` | 相对路径，不含 `crate::` |
+| 3 | `use crate :: domain :: game :: X;` | token 间空格 |
+| 3 | `fn f(_: crate::domain::game::X) {}` | 根本不是 `use` |
 
-| 写法 | 为什么漏 |
-|---|---|
-| `pub(crate) use crate::domain::X;` | 不以 `use ` 开头 |
-| `use crate::domain as dom;` | 是别名，语义不同但同样建立依赖 |
-| `use crate::{domain::X};` | 分组导入，`crate::` 后面直接是 `{` |
-| `use crate::{\n    domain::X,\n};` | 跨行 |
+字符串匹配无法穷尽一种语言的模块引用语法。**结论：凡是必须守住的分层边界，
+就用 crate 边界；只有代价明显不划算时才退回扫描器，并写清它守不住什么。**
 
-四种写法各有对应的单元用例（`the_guard_catches_*`）。它们直接测
-`referenced_layers()` 而不改源码——临时改源码会让并行执行的用例互相干扰。
+**`domain → games` 仍用扫描器**（`crates/agent-game-core/tests/layering.rs`）。
+两者都在 `core` 里，单独抽 crate 要付 workspace 成员、版本号、发布边界的成本，
+收益只是"编译器强制"对比"扫描器强制"。该扫描器已覆盖上表前两代全部写法与
+第三代的前两种，**但第三种（非 `use` 的表达式路径）是已知的、写进用例的盲区**：
+`known_gap_expression_paths_are_not_scanned` 故意断言它抓不到。若 `domain` 将来
+变复杂，应把它也抽成独立 crate，而不是继续加正则。
 
 **看门用例**：
-- `layering.rs::infra_never_depends_on_domain`
-- `layering.rs::infra_never_depends_on_games`
+- `layering.rs::infra_crate_does_not_depend_on_core`——断言 infra 的 manifest
+  里没有 core（真正的执行者是 cargo 的循环依赖检查）
 - `layering.rs::domain_never_depends_on_games`
-- `layering.rs::the_guard_actually_detects_a_violation`——反向验证：把参数反过来
-  喂给同一个检查函数，必须能抓到 `games` 对 `domain`/`infra` 的真实依赖，
-  否则上面三条永远成立却什么也没守
-- `layering.rs::the_guard_catches_{restricted_visibility,aliased_module_imports,
-  grouped_imports,multi_line_grouped_imports}`——四种已知漏检写法各一条
-- `layering.rs::comments_do_not_create_false_positives`——注释里的 use 不算
+- `layering.rs::the_guard_actually_detects_a_violation`——反向验证，否则断言
+  永远成立却什么也没守
+- `layering.rs::the_guard_catches_*`——上表各写法逐条
+- `layering.rs::known_gap_expression_paths_are_not_scanned`——盲区显式化
 
-**新增规则时的自检**：往 `infra/error.rs` 里手工加一行 `use crate::domain::...`，
-`cargo test -p agent-game-server-core --test layering` 必须红。四种写法都要试。
+**新增规则时的自检**：往 `agent-game-infra/Cargo.toml` 加一行
+`agent-game-server-core = { path = "../agent-game-core" }`，
+`cargo build -p agent-game-server-infra` 必须报 `cyclic package dependency`。
 
 ---
 
