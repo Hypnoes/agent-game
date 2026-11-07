@@ -129,18 +129,36 @@ crates/agent-game-core/src/
 
 | 用例 | 位置 | 断言 |
 |---|---|---|
-| `infra_never_depends_on_upper_layers` | `tests/layering.rs` | `infra/*.rs` 无 `use crate::domain` / `use crate::games` |
-| `games_may_depend_on_both_layers` | `tests/layering.rs` | `games/*.rs` 允许 has `use crate::domain`（证明约束不是全禁） |
-| 现有 518 条 | 全部 | 全绿，零增减 |
+| `infra_never_depends_on_domain` | `tests/layering.rs` | `infra/*.rs` 无对 `domain` 的依赖 |
+| `infra_never_depends_on_games` | `tests/layering.rs` | `infra/*.rs` 无对 `games` 的依赖 |
+| `domain_never_depends_on_games` | `tests/layering.rs` | `domain/*.rs` 无对 `games` 的依赖 |
+| `the_guard_actually_detects_a_violation` | `tests/layering.rs` | 反向验证：同一检查函数必须能抓到 `games` 的真实依赖 |
+| `the_guard_catches_*`（4 条） | `tests/layering.rs` | `pub(crate) use`、`as` 别名、分组、跨行分组四种写法 |
+| `comments_do_not_create_false_positives` | `tests/layering.rs` | 注释里的 use 不算 |
+| `every_public_module_path_still_resolves` | `tests/api_paths.rs` | 12 个历史模块路径逐个 import |
+| `top_level_reexports_still_resolve` | `tests/api_paths.rs` | 顶层 22 个再导出名字逐个点名 |
+| 现有 518 条 | 全部 | 全绿 |
 
 ## 验收标准
 
-- `cargo test --workspace`：**518 passed**（与基线一致）
+- `cargo test --workspace`：**530 passed**（基线 518 + 10 条分层看门 + 2 条 API 路径）
 - `cargo fmt --all -- --check` 零差异
 - `cargo clippy --all-targets -- -D warnings` 零告警
 - `git diff -M --stat` 对全部移动文件识别为 rename
-- `tests/layering.rs` 通过，且**删掉它会红**（用一次手工变异验证：临时给
-  `infra/error.rs` 加一行 `use crate::domain::Game;`，套件必须红）
+- 分层看门与 API 路径看门都做过**手工变异验证**（见下）
+
+### 手工变异验证
+
+四条规则各自注入一次违规，确认套件变红后恢复：
+
+| 注入 | 预期 | 实测 |
+|---|---|---|
+| `infra/error.rs` 加 `use crate::domain::game::PlayerMode;` | `layering` 红 | 红 |
+| 同上但写成 `pub(crate) use ...` | 红 | 红 |
+| 同上但写成 `use crate::domain as dom;` | 红 | 红 |
+| 同上但写成 `use crate::{\n domain::X,\n};` | 红 | 红 |
+| `domain/session.rs` 加 `use crate::games::...` | 红 | 红 |
+| 删掉 `lib.rs` 的 `manager` 兼容模块 | `api_paths` 编译失败 | 失败 |
 
 ## 已知边界
 

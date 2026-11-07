@@ -25,11 +25,19 @@ pub mod infra;
 // `core::identity::check_player_identity`、`core::wait::wait_for`、
 // `core::engine::BoxedEngine` 等）。重排目录时保留它们，
 // 让"内部结构变了"不变成"调用方必须跟着改"。
+//
+// 重排前 `lib.rs` 有 12 个 `pub mod`，每一个都必须仍可导入。缺一个就是
+// 一次公开 API 破坏，而编译期只在**调用方**那里才报错——所以
+// `tests/api_paths.rs` 会逐个把它们 import 一遍。
 pub use infra::{budget, config, error, identity, prompt, signal, wait};
 
 /// 旧路径 `core::engine` 的别名。引擎协议现在住在 `domain::game`。
 pub mod engine {
     pub use crate::domain::game::*;
+    // `ActionParams` / `CreateParams` 曾被公开在 `core::engine` 下，但它们是
+    // `infra::params` 的类型，不是 `domain::game` 的。通配再导出带不出它们
+    // （`use` 进来的名字不是 `pub`），必须显式转发。
+    pub use crate::infra::params::{ActionParams, CreateParams};
 }
 
 /// 旧路径 `core::testing` 的别名。测试替身现在住在 `domain::testing`。
@@ -40,6 +48,14 @@ pub mod testing {
 /// 旧路径 `core::registry` 的别名。注册表现在住在 `domain::registry`。
 pub mod registry {
     pub use crate::domain::registry::*;
+}
+
+/// 旧路径 `core::manager` 的别名。现在拆成 `domain::supervisor` 与
+/// `domain::session` / `domain::snapshot`。
+pub mod manager {
+    pub use crate::domain::session::{Session, SessionId};
+    pub use crate::domain::snapshot::{SessionSnapshot, TimeoutRecord};
+    pub use crate::domain::supervisor::GameManager;
 }
 
 // ── 顶层再导出 ──

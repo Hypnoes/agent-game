@@ -272,19 +272,60 @@ Rust 里没有 `skip` 这个概念（`#[ignore]` 只用于"慢"，不用于"能�
 `infra/`，但它们实现/持有 `GameEngine`，于是 `infra` 反过来依赖了 `domain`。
 看门用例第一次运行就抓到了这两处，随之把它们移到 `domain/`。
 
-**现在**：`tests/layering.rs` 直接读源码文本，断言 `infra/` 下不出现
-`use crate::domain` / `use crate::games`。那里不解析 AST——要守的东西只是一个
-`use crate::<层>` 前缀，引入解析器的代价远超收益。
+**现在**：`tests/layering.rs` 读源码文本并**先归一化**（去注释、合并跨行与花括号
+分组），再判断每条 use 语句引用了哪些层。三条禁止：`infra → domain`、
+`infra → games`、`domain → games`。
+
+**为什么不能逐行前缀匹配**：第一版就是那么写的，被 review 抓出四种漏检写法，
+每一种都能让 `infra` 依赖 `domain` 而看门全绿：
+
+| 写法 | 为什么漏 |
+|---|---|
+| `pub(crate) use crate::domain::X;` | 不以 `use ` 开头 |
+| `use crate::domain as dom;` | 是别名，语义不同但同样建立依赖 |
+| `use crate::{domain::X};` | 分组导入，`crate::` 后面直接是 `{` |
+| `use crate::{\n    domain::X,\n};` | 跨行 |
+
+四种写法各有对应的单元用例（`the_guard_catches_*`）。它们直接测
+`referenced_layers()` 而不改源码——临时改源码会让并行执行的用例互相干扰。
 
 **看门用例**：
-- `crates/agent-game-core/tests/layering.rs::infra_never_depends_on_domain`
-- `crates/agent-game-core/tests/layering.rs::infra_never_depends_on_games`
+- `layering.rs::infra_never_depends_on_domain`
+- `layering.rs::infra_never_depends_on_games`
+- `layering.rs::domain_never_depends_on_games`
 - `layering.rs::the_guard_actually_detects_a_violation`——反向验证：把参数反过来
-  喂给同一个检查函数，必须能抓到 `domain` 对 `infra` 的依赖，否则前两条永远成立
-  却什么也没守
+  喂给同一个检查函数，必须能抓到 `games` 对 `domain`/`infra` 的真实依赖，
+  否则上面三条永远成立却什么也没守
+- `layering.rs::the_guard_catches_{restricted_visibility,aliased_module_imports,
+  grouped_imports,multi_line_grouped_imports}`——四种已知漏检写法各一条
+- `layering.rs::comments_do_not_create_false_positives`——注释里的 use 不算
 
 **新增规则时的自检**：往 `infra/error.rs` 里手工加一行 `use crate::domain::...`，
-`cargo test -p agent-game-server-core --test layering` 必须红。
+`cargo test -p agent-game-server-core --test layering` 必须红。四种写法都要试。
+
+---
+
+## 17. 目录重排不许破坏公开导入路径
+
+重排是"纯内部"的改动，但编译期只在**调用方**那里才报错。core 自己的测试会跟着
+改，所以套件全绿也可能已经把外部使用者打断——这正是本 PR 第一版真实犯的错：
+把 `manager.rs` 拆成四个文件后，`core::manager::{GameManager, Session, ...}`
+整条路径消失了，而 518 条测试全绿，因为没有任何用例从外部位置 import 它。
+
+**现在**：`lib.rs` 用 `pub mod <旧名> { pub use <新位置>::*; }` 保留全部 12 个
+历史模块路径，并显式转发通配带不到的类型（`ActionParams` / `CreateParams` 曾是
+`engine` 下的公开名字，但它们是 `infra::params` 的类型，`pub use domain::game::*`
+带不出来）。
+
+**看门用例**：`crates/agent-game-core/tests/api_paths.rs`
+- `every_public_module_path_still_resolves`——12 个模块路径逐个 import 一遍
+- `top_level_reexports_still_resolve`——顶层 `pub use` 的 22 个名字逐个点名
+
+它不测行为，测的是"路径还在"。删掉 `manager` 兼容模块后，这个文件**编译失败**，
+而不是行为断言失败。
+
+**新增规则时的自检**：删掉 `lib.rs` 里任意一个兼容模块，`cargo test -p
+agent-game-server-core --test api_paths` 必须编译失败。
 
 ---
 
