@@ -82,20 +82,37 @@ jobs:
       - uses: taiki-e/install-action@cargo-mutants
 
       - name: 变异测试（core）
-        # 变异 core，但用**整个 workspace** 的测试来判断"这个变异有没有被抓住"。
+        # 变异 core，但判断"这个变异有没有被抓住"时要用**消费者 crate** 的测试。
         #
-        # `--test-workspace true` 是必需的，不是可选优化。#5 把 infra / domain
-        # 抽成独立 crate 之后，有一部分看门用例天然住在别的 crate 里——例如
+        # 为什么不能只跑 `-p core`：#5 把 infra / domain 抽成独立 crate 之后，
+        # 有一部分看门用例天然住在别的 crate 里——例如
         # `GuessNumberEngine::describe_tools()` 返回空表这个变异，会被
-        # `agent-game-mcp` 的 `tools.rs` 用例抓住（实测 2 条红）。默认行为是只跑
-        # 被测 crate 自己的测试，于是这两个变异体就"存活"了——不是没有看门人，
+        # `agent-game-mcp` 的 `tools.rs` 用例抓住（实测 2 条红）。默认行为只跑
+        # 被测 crate 自己的测试，于是它被判为"存活"——不是没有看门人，
         # 是看门人不在这个 crate 里。
         #
-        # 只对 core 做全量：规则、预算、身份、等待都在这里，是"必须被守住"
-        # 的那一层。server/mcp 两层的传输行为已由集成测试覆盖，全量跑代价过高。
+        # 为什么不用 `--test-workspace true`：那样每个变异体都要跑全部 527 条
+        # 测试。实测 271 个变异体跑了 25 分钟还没完。
         #
-        # infra / domain 暂不纳入：这两层的测试是从 core 整体搬过来的，还没有像
-        # core 那样做过变异收敛（core 的收敛过程见 docs/issues/004-riir.md，
-        # 五轮 144→0）。实测把两层加进来会活 57 个，那是"新测试还没做完"，
-        # 不该在纯结构重排的 PR 里顺带解决。收敛完成后再加回这一行。
-        run: cargo mutants -p agent-game-server-core --test-workspace true --config .config/mutants.toml
+        # 成本现状：这三个 test-package 下实测 **271 变异体 / 40 分钟**
+        # （250 caught + 21 unviable，0 存活）。慢的原因不是测试条数，而是每个
+        # 变异体都要重编译 core 及依赖它的 mcp/server——单变异体 8.9 秒里绝大
+        # 部分是编译。
+        #
+        # 40 分钟作为"只在本 job 跑、且 needs: test"的门槛是可接受的：它不阻塞
+        # 前两个 job，且只在测试全绿后才启动。想再快只能减少变异体（用
+        # `--in-diff` 只变异改动行，会漏掉未改动代码的回归）或拆 job 并行
+        # （需要 --shards，代价是可以并行的前提还没验证）。当前选可接受而非最优。
+        #
+        # infra / domain 暂不纳入：这两层的测试是从 core 整体搬过来的，还没做过
+        # 像 core 那样五轮的变异收敛（见 docs/issues/004-riir.md）。实测把两层
+        # 加进来会活 57 个，那是"新测试还没做完"，不该在纯结构重排的 PR 里
+        # 顺带解决。
+        #
+        # 本 job 没有 timeout-minutes，用 GitHub 默认的 360 分钟；40 分钟有充足余量。
+        run: |
+          cargo mutants -p agent-game-server-core \
+            --test-package agent-game-server-core \
+            --test-package agent-game-server-mcp \
+            --test-package agent-game-server-server \
+            --config .config/mutants.toml
