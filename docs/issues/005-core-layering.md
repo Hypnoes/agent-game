@@ -69,7 +69,8 @@ games/*.rs     (1529 行生产)        → config, engine, error, identity, prom
 
 ## 目标
 
-按 `infra → domain → games` 三层重排目录，让依赖方向**可见且可测试**。
+按 `infra → domain → games` 分层重排，并把每层抽成**独立 crate**，
+让依赖方向由 cargo 的循环依赖检查强制。
 
 ```
 crates/agent-game-infra/           ← 不依赖任何上层
@@ -159,7 +160,7 @@ error: cyclic package dependency: package `agent-game-server-core` depends on it
 
 ## 验收标准
 
-- `cargo test --workspace`：**525 passed**（master 基线 292 个测试名全部保留，零丢失；新增 7 条看门）
+- `cargo test --workspace`：**527 passed**（master 基线 292 个测试名全部保留，零丢失；新增看门用例）
 - `cargo fmt --all -- --check` 零差异
 - `cargo clippy --all-targets -- -D warnings` 零告警
 - `git diff -M --stat` 对全部移动文件识别为 rename
@@ -202,3 +203,69 @@ error: cyclic package dependency: package `agent-game-server-core` depends on it
 
 本轮 review 的结论：现有结构不直观。该判断由上面的依赖图与职责聚类数据
 支撑，不是风格偏好——这也是它从"优先级不高下次再做"提升为优先项的原因。
+
+---
+
+## 实施中与原规划的偏差
+
+### 1. 从"core 内分三层"改成"每层一个 crate"
+
+规划里是 `crates/agent-game-core/src/{infra,domain,games}/`。实施后改成了
+四个 crate：`agent-game-infra`、`agent-game-domain`、`agent-game-core`
+（只剩 `games/`），加原有的 `-mcp` 与 `-server`。
+
+**原因**：分层本来靠 `tests/layering.rs` 读源码文本守着，被 review 连续四代
+绕过——
+
+| 代 | 绕过写法 |
+|---|---|
+| 1 | `pub(crate) use crate::domain::X;` / `use crate::domain as dom;` / `use crate::{domain::X};` |
+| 2 | `pub(in crate::infra) use ...` / `use crate::{infra::X, domain};` |
+| 3 | `use super::super::domain::...;` / `use crate :: domain :: ...;` / `fn f(_: crate::domain::X)` |
+| 4 | `use crate as root; use root::games::X;` |
+
+第四代是决定性的：只要还能用任意别名到达上层，任何文本前缀检查都有下一代替换。
+改成 crate 边界后，`use crate as root` 在 `domain` crate 里只能到达 `domain`
+自己，`root::games` 根本不存在。
+
+### 2. `registry` 与 `testing` 从 infra 挪到 domain
+
+规划里把它们放在 infra。写看门用例后第一次运行就失败：`registry` 持有
+`GameEngine`、`testing` 实现 `GameEngine`，于是 infra 反向依赖了 domain。
+这条是看门用例抓出来的，不是事后发现的。
+
+### 3. 变异测试改用 `--test-workspace true`
+
+拆 crate 之后有一部分看门用例天然住在别的 crate 里。例如
+`GuessNumberEngine::describe_tools()` 返回空表这个变异，会被
+`agent-game-mcp` 的 `tools.rs` 用例抓住（实测 2 条红）；但
+`cargo mutants -p core` 默认只跑 core 自己的测试，跨 crate 用例不执行，
+于是它被判为"存活"。
+
+**不是没有看门人，是看门人不在这个 crate 里。** 加 `--test-workspace true`
+后（变异的仍是 core，判断用整个 workspace 的测试），实测 82 个变异体
+73 caught + 9 unviable，0 存活。
+
+### 4. infra / domain 的变异收敛单独立项
+
+曾把两层也加进变异测试的 `-p`，533 个变异体里活 59 个（domain 36 /
+infra 21 / core 2）。那不是新引入的缺陷：这两层的测试是从 core 整体搬过来的，
+还没做过像 core 那样五轮的变异收敛（见 `004-riir.md`）。在纯结构重排的 PR 里
+扩大变异范围，等于要求它顺带完成两层的新测试工作。已回退，收敛单独推进。
+
+### 5. 修掉一个从未生效的 CI
+
+仓库根的 `.cargo/config.toml` 把 `rustc-wrapper` 设成了 `sccache`（本地加速用），
+但 GitHub runner 没装它，于是每条 cargo 命令都报
+`could not execute process 'sccache ...'`。CI 因此**从来没跑过真实检查**：
+格式步骤碰巧能过（rustfmt 不经过 rustc），Clippy 与 nextest 全在启动阶段失败。
+
+用 `CARGO_BUILD_RUSTC_WRAPPER: ""` 覆盖即可。修完之后 CI 第一次跑出真实结果，
+连带暴露了 17 处 clippy 1.99 的 `assert_is_empty` 告警（CI 用 1.99，本地是 1.98）。
+
+### 6. 一个测试竞态
+
+`cargo_really_rejects_a_reverse_dependency` 第一版直接往
+`infra/Cargo.toml` 注入反向依赖、跑完恢复，本地全绿、CI 红——nextest 每个测试
+跑在独立进程里，进程内的锁串行不了，另一个用例读到了被注入的中间状态。
+改为在临时目录搭最小 workspace 验证机制本身，完全不碰仓库文件。
