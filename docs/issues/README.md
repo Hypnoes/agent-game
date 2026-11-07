@@ -12,7 +12,18 @@
 | [002](./002-mcp-http-transport.md) | [#2](https://github.com/Hypnoes/agent-game/issues/2) | 迁移到 MCP over HTTP 并移除本地客户端 | 001 | 已合并 |
 | [003](./003-full-remediation.md) | — | 全量修复：正确性、健壮性、测试框架与工具链 | 001、002 | 已实施 |
 | [004](./004-riir.md) | — | RIIR：用 Rust 重写整个服务端 | 001–003 | 已实施 |
-| [005](./005-core-layering.md) | [#5](https://github.com/Hypnoes/agent-game/issues/5) | core 分层重排，每层抽成独立 crate | 004 | 实施中 |
+| [005](./005-core-layering.md) | [#5](https://github.com/Hypnoes/agent-game/issues/5) | core 分层重排，每层抽成独立 crate | 004 | 已合并 |
+| [006](./006-delete-dead-code.md) | [#8](https://github.com/Hypnoes/agent-game/issues/8) | 删除死代码与失效的协议面 | 005 | 规划中 |
+| [007](./007-testing-gate.md) | [#9](https://github.com/Hypnoes/agent-game/issues/9) | 测试替身不许进发布产物 | 005 | 规划中 |
+| [008](./008-liars-dice-modelling.md) | [#10](https://github.com/Hypnoes/agent-game/issues/10) | LiarsDice 建模收紧 | 005 | 规划中 |
+| [009](./009-phase-enum.md) | [#11](https://github.com/Hypnoes/agent-game/issues/11) | phase 枚举化，消除框架硬编码 | 008 | 规划中 |
+
+005 之后这批的依赖关系：**006 与 007 互相独立**（一个删死代码、一个管测试替身的
+编译门控），可以并行；**008 依赖 005**（要改 `LiarsDiceEngine` 的内部表示）；
+**009 依赖 008**（同一批文件，先改语义再改类型，否则两个 PR 会反复冲突）。
+
+006 处理的 `games/state_machine.rs` 在 005 之前就存在，但它属于"死代码清理"而
+不是"结构重排"，所以没有并入 005。
 
 001 可以在现有 REST 通道上独立验证等待行为；002 把同一行为搬到 MCP 传输层，并删除本地客户端包。两者的分支与 PR 采用堆叠方式：002 基于 001 的分支开发，PR 先指向 001 分支，待 001 合并后再把 base 改为 `master`。两个 Issue 均已实现并合入 `master`，实施中与原规划的偏差记在各自文档末尾的「实施结果」一节。
 

@@ -26,7 +26,7 @@ MCP 的 Streamable HTTP 客户端不会跟随 307。旧版用 `Mount("/mcp", ...
 服务端预算 55 秒（`Config::block_budget`），README 里配的 MCP 客户端超时是 70 秒。
 反过来的话客户端会在服务端返回之前先超时，Agent 看到的是传输层错误而不是对局状态。
 
-**看门用例**：`crates/agent-game-server-core/src/config.rs::client_timeout_leaves_room_for_the_server`
+**看门用例**：`crates/agent-game-infra/src/config.rs::client_timeout_leaves_room_for_the_server`
 （断言 70 > 55 且余量 ≥ 10）。
 
 ---
@@ -54,13 +54,13 @@ MCP 的 Streamable HTTP 客户端不会跟随 307。旧版用 `Mount("/mcp", ...
 `player_index` 就能读到对手的骰子，还能替对手叫数。大话骰的全部玩法建立在私有
 信息上，这条一松，游戏就没有意义了。
 
-**现在**：校验在 `core::identity::check_player_identity()`，REST 与 MCP 共用。
+**现在**：校验在 `infra::identity::check_player_identity()`，REST 与 MCP 共用。
 多人引擎通过 `player_tokens()` 暴露 token 列表，`PlayerMode::Multi` 决定是否强制。
 
 只有 `join` 允许不带 token（新玩家入场）。
 
 **看门用例**：
-- `crates/agent-game-server-core/src/games/liars_dice.rs::actions_require_player_token`
+- `crates/agent-game-core/src/games/liars_dice.rs::actions_require_player_token`
 - `crates/agent-game-server/tests/http_contract.rs::the_player_view_needs_the_token_header`
 
 ---
@@ -87,20 +87,20 @@ MCP 的 Streamable HTTP 客户端不会跟随 307。旧版用 `Mount("/mcp", ...
 3 人以上时任何一名玩家叫数都会广播。醒来就返回会让 Agent 以为自己可以行动，
 于是发出一个必然被 `check_turn` 拒绝的动作。
 
-`core::wait::wait_for` 是唯一实现：每轮先判条件、再等剩余预算，被唤醒只是回到
+`infra::wait::wait_for` 是唯一实现：每轮先判条件、再等剩余预算，被唤醒只是回到
 循环顶部。引擎只需提供 `is_ready_for()`。
 
 **顺序也必须固定**：先订阅、再判条件、再等。反过来会让"检查"与"订阅"之间发生的
 变更丢掉唤醒，白等满整个预算。
 
 **看门用例**：
-- `crates/agent-game-server-core/src/wait.rs::a_spurious_wakeup_keeps_waiting`
-- `crates/agent-game-server-core/src/wait.rs::no_lost_wakeup_when_notified_before_the_first_check`
-- `crates/agent-game-server-core/src/signal.rs::no_lost_wakeup_between_subscribe_and_wait`
+- `crates/agent-game-infra/src/wait.rs::a_spurious_wakeup_keeps_waiting`
+- `crates/agent-game-infra/src/wait.rs::no_lost_wakeup_when_notified_before_the_first_check`
+- `crates/agent-game-infra/src/signal.rs::no_lost_wakeup_between_subscribe_and_wait`
 
 ---
 
-## 7. `timeout` 解析只有一份实现：`core::budget::resolve_budget`
+## 7. `timeout` 解析只有一份实现：`infra::budget::resolve_budget`
 
 | 传入 | 语义 |
 |---|---|
@@ -116,7 +116,7 @@ REST 侧 `min(float(...), BLOCK_BUDGET)` 让 `0` 就是 `0`。同一个客户端
 **现在**：解析器只有一个公开入口，其它地方拿到的是 `f64` 预算而不是原始 JSON，
 写不出第二份解析。
 
-**看门用例**：`crates/agent-game-server-core/src/budget.rs` 全部用例，加
+**看门用例**：`crates/agent-game-infra/src/budget.rs` 全部用例，加
 `http_contract.rs::a_non_numeric_timeout_is_rejected` 与
 `mcp_transport.rs::timeout_zero_does_not_block_over_mcp`。
 
@@ -146,9 +146,9 @@ REST 侧 `min(float(...), BLOCK_BUDGET)` 让 `0` 就是 `0`。同一个客户端
 只能替别人的超时开盅——胜负由别人的超时决定。3 人局可稳定复现。
 
 **看门用例**：
-- `crates/agent-game-server-core/src/games/liars_dice.rs::turn_timeout_clears_the_round_bid`
+- `crates/agent-game-core/src/games/liars_dice.rs::turn_timeout_clears_the_round_bid`
 - `invariants.rs::a_timeout_clears_the_round_bid_like_a_challenge_does`
-- `crates/agent-game-server-core/tests/full_game.rs::a_timeout_in_the_middle_does_not_lock_the_next_player`
+- `crates/agent-game-core/tests/full_game.rs::a_timeout_in_the_middle_does_not_lock_the_next_player`
 
 ---
 
@@ -163,7 +163,7 @@ REST 的 `state` 分支在请求内直接调用 `check_timeouts()`，所以一�
 **现在**：`check_timeout` 返回 `Result<Option<TimeoutEvent>, EngineError>`，
 `Err` 分支只记 `warn!` 并继续。类型表达了"这里可能失败且必须隔离"。
 
-**看门用例**：`crates/agent-game-server-core/src/manager.rs::a_broken_engine_does_not_stop_the_others`。
+**看门用例**：`crates/agent-game-domain/src/supervisor.rs::a_broken_engine_does_not_stop_the_others`。
 
 ---
 
@@ -194,7 +194,7 @@ token 在启动时解析一次：有 `AGENT_GAME_ADMIN_TOKEN` 就用它，没有
 
 ## 12. 身份校验必须与传输无关，且在等待之前
 
-校验逻辑在 `core::identity::check_player_identity()`。REST 与 MCP 共用同一份判断，
+校验逻辑在 `infra::identity::check_player_identity()`。REST 与 MCP 共用同一份判断，
 两条传输各写一个**翻译函数**（`ApiError::from_engine` 与 `engine_error_text`），
 但分类只在 `EngineError::is_client_error()` 里定义。
 
@@ -256,7 +256,7 @@ Rust 里没有 `skip` 这个概念（`#[ignore]` 只用于"慢"，不用于"能�
 
 ## 16. 分层边界必须由 crate 强制，不用源码扫描
 
-四个 crate，依赖只能向上：
+五个 crate，依赖只能向上：
 
 | crate | 放什么 | 不许依赖 |
 |---|---|---|
@@ -298,9 +298,11 @@ error: cyclic package dependency: package `agent-game-server-core` depends on it
   `domain_does_not_depend_on_core`——断言 manifest 里没有反向依赖
 - `the_dependency_chain_is_core_to_domain_to_infra`——正向断言，防止
   "拆开但不建立依赖"也能全绿
-- `cargo_really_rejects_a_reverse_dependency`——**真的调用 cargo**：临时往
-  `infra/Cargo.toml` 注入反向依赖，断言 cargo 报 `cyclic`，然后恢复。
-  前四条只读文本，这一条证明约束是构建系统执行的，不是我们在测试里模拟的
+- `cargo_really_rejects_a_cyclic_dependency`——**真的调用 cargo**：在临时目录
+  搭一个两个 crate 互相依赖的最小 workspace，断言 cargo 报 `cyclic`。前四条只读
+  文本，这一条证明约束是构建系统执行的，不是我们在测试里模拟的。
+  （第一版直接改仓库的 `infra/Cargo.toml`、跑完恢复，CI 上红——nextest 每个测试
+  跑在独立进程里，另一个用例读到了注入的中间状态。这是测试竞态，不是产品缺陷。）
 
 **新增规则时的自检**：往 `crates/agent-game-infra/Cargo.toml` 的
 `[dependencies]` 加一行 `agent-game-server-domain = { path = "../agent-game-domain" }`，
@@ -321,8 +323,15 @@ error: cyclic package dependency: package `agent-game-server-core` depends on it
 带不出来）。
 
 **看门用例**：`crates/agent-game-core/tests/api_paths.rs`
-- `every_public_module_path_still_resolves`——12 个模块路径逐个 import 一遍
-- `top_level_reexports_still_resolve`——顶层 `pub use` 的 22 个名字逐个点名
+- `every_public_module_path_still_resolves`——12 个模块路径与各模块内的历史
+  公开符号逐个 import
+- `nested_public_symbols_still_resolve`——子模块路径上的符号
+- `version_is_still_exported`——`VERSION` 不在任何模块里，容易被漏
+- `top_level_reexports_still_resolve`——顶层 `pub use` 的名字逐个点名
+
+对照重排前的 51 个公开符号，探了 50 个。唯一例外是
+`games::state_machine::Transitions`：它整个 workspace 零调用者、只有自己的单元测试
+引用，是死代码，已排进 006 删除。给它加探针等于把即将消失的符号固化成契约。
 
 它不测行为，测的是"路径还在"。删掉 `manager` 兼容模块后，这个文件**编译失败**，
 而不是行为断言失败。
@@ -342,4 +351,4 @@ agent-game-server-core --test api_paths` 必须编译失败。
 | 行宽 | 交给 `rustfmt`；中文注释按显示宽度算会误报，因此不设 `max_width` |
 | 错误 | 请求路径上的所有失败都走 `Result`，不 `panic` |
 | 时间 | 代码里用 `Instant`；只有跨进程的展示值才转成毫秒 |
-| 测试替身 | `core::testing::DummyEngine`，三个 crate 共用；它不随二进制发布 |
+| 测试替身 | `domain::testing::DummyEngine`（`agent-game-server-domain`），各 crate 的测试共用；它不随二进制发布 |
