@@ -26,10 +26,11 @@
 //! 非 `use` 的表达式路径），每次都合法可编译却漏检。字符串匹配无法穷尽一种
 //! 语言的模块引用语法，所以改用 crate 边界。
 //!
-//! `domain` 与 `games` 留在同一 crate 内（`domain → games` 也禁止），那条方向
-//! 仍由 `tests/layering.rs` 守——为它单独抽一个 crate 收益不抵成本。
+//! `domain` 也抽成了独立 crate（`agent-game-server-domain`），它同样不依赖本
+//! crate。于是 `domain → games` 的方向也由编译器强制，不再需要源码扫描器。
+//!
+//! 本 crate 只剩 `games/`：具体规则实现。
 
-pub mod domain;
 pub mod games;
 
 // ── 兼容路径 ──
@@ -40,42 +41,47 @@ pub use agent_game_server_infra::{budget, config, error, identity, prompt, signa
 
 /// 旧路径 `core::engine` 的别名。引擎协议现在住在 `domain::game`。
 pub mod engine {
-    pub use crate::domain::game::*;
+    pub use agent_game_server_domain::game::*;
     // `ActionParams` / `CreateParams` 曾被公开在 `core::engine` 下，但它们是
     // `infra` crate 的类型，不是 `domain::game` 的。通配再导出带不出它们
     // （`use` 进来的名字不是 `pub`），必须显式转发。
     pub use agent_game_server_infra::params::{ActionParams, CreateParams};
 }
 
+/// 旧路径 `core::domain`（若曾有人引用）。已在 `agent-game-server-domain` crate。
+pub use agent_game_server_domain as domain;
+
 /// 旧路径 `core::testing` 的别名。测试替身现在住在 `domain::testing`。
 pub mod testing {
-    pub use crate::domain::testing::*;
+    pub use agent_game_server_domain::testing::*;
 }
 
 /// 旧路径 `core::registry` 的别名。注册表现在住在 `domain::registry`。
 pub mod registry {
-    pub use crate::domain::registry::*;
+    pub use agent_game_server_domain::registry::*;
 }
 
 /// 旧路径 `core::manager` 的别名。现在拆成 `domain::supervisor` 与
 /// `domain::session` / `domain::snapshot`。
 pub mod manager {
-    pub use crate::domain::session::{Session, SessionId};
-    pub use crate::domain::snapshot::{SessionSnapshot, TimeoutRecord};
-    pub use crate::domain::supervisor::GameManager;
+    pub use agent_game_server_domain::session::{Session, SessionId};
+    pub use agent_game_server_domain::snapshot::{SessionSnapshot, TimeoutRecord};
+    pub use agent_game_server_domain::supervisor::GameManager;
 }
 
 // ── 顶层再导出 ──
+pub use agent_game_server_domain::game::{
+    BoxedEngine, GameEngine, PlayerMode, PlayerView, TimeoutEvent, ToolSpec,
+};
+pub use agent_game_server_domain::registry::{GameMeta, Registry};
+pub use agent_game_server_domain::session::{Session, SessionId};
+pub use agent_game_server_domain::snapshot::{SessionSnapshot, TimeoutRecord};
+pub use agent_game_server_domain::supervisor::GameManager;
 pub use agent_game_server_infra::config::Config;
 pub use agent_game_server_infra::error::{EngineError, SessionNotFound};
 pub use agent_game_server_infra::params::{ActionParams, CreateParams};
 pub use agent_game_server_infra::prompt::{Ctx, PromptStore};
 pub use agent_game_server_infra::signal::{ChangeSignal, WaitOutcome};
-pub use domain::game::{BoxedEngine, GameEngine, PlayerMode, PlayerView, TimeoutEvent, ToolSpec};
-pub use domain::registry::{GameMeta, Registry};
-pub use domain::session::{Session, SessionId};
-pub use domain::snapshot::{SessionSnapshot, TimeoutRecord};
-pub use domain::supervisor::GameManager;
 
 /// 版本号的权威来源：`Cargo.toml` 一个地方写，运行期读它。
 ///

@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use rand::RngExt as _;
 use serde_json::Value;
 
-use crate::domain::game::{
+use agent_game_server_domain::game::{
     DEFAULT_FINISHED_STATES, GameEngine, PlayerMode, PlayerView, TimeoutEvent,
 };
 use agent_game_server_infra::config::Config;
@@ -456,10 +456,10 @@ impl GameEngine for GuessNumberEngine {
         self.setup.clone()
     }
 
-    fn describe_tools(&self) -> Vec<crate::domain::game::ToolSpec> {
+    fn describe_tools(&self) -> Vec<agent_game_server_domain::game::ToolSpec> {
         use serde_json::json;
 
-        use crate::domain::game::ToolSpec;
+        use agent_game_server_domain::game::ToolSpec;
 
         vec![
             ToolSpec::new(

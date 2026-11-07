@@ -1,4 +1,4 @@
-# core 按 infra/domain/games 重排目录，并把 infra 抽成独立 crate
+# core 按 infra/domain/games 重排目录，并把每一层抽成独立 crate
 
 | 项 | 值 |
 |---|---|
@@ -72,15 +72,20 @@ games/*.rs     (1529 行生产)        → config, engine, error, identity, prom
 按 `infra → domain → games` 三层重排目录，让依赖方向**可见且可测试**。
 
 ```
-crates/agent-game-infra/          ← 独立 crate，不依赖 core
+crates/agent-game-infra/           ← 不依赖任何上层
 ├─ budget.rs  config.rs  error.rs  identity.rs
 ├─ prompt.rs  signal.rs  wait.rs
-└─ params/{create,action}.rs      从 engine.rs 抽出 ~250 行
+└─ params/{create,action}.rs       从 engine.rs 抽出 ~250 行
 
-crates/agent-game-core/src/       ← 依赖 infra
-├─ lib.rs               re-export + 分层文档 + 兼容路径
-├─ domain/              GameAbstraction / Lobby / Session / Snapshot / Supervisor
-└─ games/               GameImpl（仅改 use 路径）
+crates/agent-game-domain/          ← 依赖 infra
+├─ game.rs       GameAbstraction：trait + DTO
+├─ lobby.rs      Lobby：匹配
+├─ session.rs / snapshot.rs / supervisor.rs
+└─ registry.rs / testing.rs
+
+crates/agent-game-core/src/        ← 依赖 domain + infra
+├─ lib.rs         re-export + 分层文档 + 兼容路径
+└─ games/         GameImpl（仅改 use 路径）
 ```
 
 ## 设计
@@ -109,19 +114,21 @@ crates/agent-game-core/src/       ← 依赖 infra
 | 3 | `use super::super::domain::game::X;` | 相对路径 |
 | 3 | `use crate :: domain :: game :: X;` | token 间空格 |
 | 3 | `fn f(_: crate::domain::game::X) {}` | 根本不是 `use` |
+| 4 | `use crate as root; use root::games::X;` | 别名后引用，前缀完全不匹配 |
 
-字符串匹配无法穷尽一种语言的模块引用语法。**所以 `infra` 被抽成独立 crate**：
-它不依赖 `agent-game-core`，反向依赖会让 cargo 在循环依赖检查处直接失败：
+第四代是决定性的：只要还能用任意别名到达上层，任何文本前缀检查都有下一代替换。
+
+字符串匹配无法穷尽一种语言的模块引用语法。**所以每一层都抽成独立 crate**：
+`infra` 不依赖 `domain` 或 `core`，`domain` 不依赖 `core`。反向依赖会让 cargo 在
+循环依赖检查处直接失败：
 
 ```
 error: cyclic package dependency: package `agent-game-server-core` depends on itself
 ```
 
-这样约束由编译器执行，不存在"漏检某种写法"的余地。
-
-`domain → games` 仍用扫描器（两者都在 `core` 里，单独抽 crate 成本不抵收益），
-但它现在的盲区被**显式写成用例**（`known_gap_expression_paths_are_not_scanned`），
-而不是假装不存在。
+这样约束由编译器执行，不存在"漏检某种写法"的余地。第四代绕过也随之失效——
+在 `domain` crate 里 `use crate as root` 只能到达 `domain` 自己，`root::games`
+根本不存在。
 
 ### 约束三：顺带降 trait 默认实现
 
@@ -141,11 +148,10 @@ error: cyclic package dependency: package `agent-game-server-core` depends on it
 
 | 用例 | 位置 | 断言 |
 |---|---|---|
-| `infra_crate_does_not_depend_on_core` | `tests/layering.rs` | infra 的 manifest 里没有 core（真正执行者是 cargo） |
-| `domain_never_depends_on_games` | `tests/layering.rs` | `domain/*.rs` 无对 `games` 的依赖 |
-| `the_guard_actually_detects_a_violation` | `tests/layering.rs` | 反向验证：同一检查函数必须能抓到 `games` 对 `domain` 的真实依赖 |
-| `the_guard_catches_*`（7 条） | `tests/layering.rs` | 上表各写法逐条 |
-| `known_gap_expression_paths_are_not_scanned` | `tests/layering.rs` | 盲区显式化：非 `use` 的表达式路径抓不到 |
+| `infra_does_not_depend_on_domain` / `..._on_core` | `tests/layering.rs` | manifest 里无反向依赖 |
+| `domain_does_not_depend_on_core` | `tests/layering.rs` | 同上 |
+| `the_dependency_chain_is_core_to_domain_to_infra` | `tests/layering.rs` | 正向断言，防止"拆开但不建立依赖"也全绿 |
+| `cargo_really_rejects_a_reverse_dependency` | `tests/layering.rs` | **真的调用 cargo**：注入反向依赖，断言报 `cyclic`，然后恢复 |
 | `comments_do_not_create_false_positives` | `tests/layering.rs` | 注释里的 use 不算 |
 | `every_public_module_path_still_resolves` | `tests/api_paths.rs` | 12 个历史模块路径逐个 import |
 | `top_level_reexports_still_resolve` | `tests/api_paths.rs` | 顶层 22 个再导出名字逐个点名 |
@@ -153,7 +159,7 @@ error: cyclic package dependency: package `agent-game-server-core` depends on it
 
 ## 验收标准
 
-- `cargo test --workspace`：**534 passed**（基线 518 + 14 条分层看门 + 2 条 API 路径）
+- `cargo test --workspace`：**525 passed**（master 基线 292 个测试名全部保留，零丢失；新增 7 条看门）
 - `cargo fmt --all -- --check` 零差异
 - `cargo clippy --all-targets -- -D warnings` 零告警
 - `git diff -M --stat` 对全部移动文件识别为 rename

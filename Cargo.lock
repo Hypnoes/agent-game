@@ -6,6 +6,7 @@ version = 4
 name = "agent-game-server-core"
 version = "0.4.0"
 dependencies = [
+ "agent-game-server-domain",
  "agent-game-server-infra",
  "insta",
  "proptest",
@@ -16,6 +17,17 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "agent-game-server-domain"
+version = "0.4.0"
+dependencies = [
+ "agent-game-server-infra",
+ "serde_json",
+ "tokio",
  "tracing",
  "uuid",
 ]

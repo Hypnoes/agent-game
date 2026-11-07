@@ -16,7 +16,8 @@
 use agent_game_server_core::budget::resolve_budget;
 use agent_game_server_core::config::{Config, DEFAULT_BLOCK_BUDGET_SECS};
 use agent_game_server_core::engine::{
-    ActionParams, BoxedEngine, CreateParams, GameEngine, PlayerMode, PlayerView, ToolSpec,
+    ActionParams, BoxedEngine, CreateParams, DEFAULT_FINISHED_STATES, DEFAULT_SENSITIVE_KEYS,
+    GameEngine, PlayerMode, PlayerView, ToolSpec,
 };
 use agent_game_server_core::error::{EngineError, SessionNotFound};
 use agent_game_server_core::games::{GuessNumberEngine, LiarsDiceEngine};
@@ -56,6 +57,11 @@ fn every_public_module_path_still_resolves() {
     let _: Option<DummyEngine> = None;
     let _: Option<Config> = None;
     let _: Option<f64> = Some(DEFAULT_BLOCK_BUDGET_SECS);
+    // 这两个常量曾公开在 `core::engine` 下。`pub use domain::game::*` 会把它们
+    // 一起带出来（它们是 `pub const`，不是 `use` 进来的名字），所以兼容模块
+    // 至今能导出它们——但没有探针就没人知道哪天会掉。
+    let _: &[&str] = DEFAULT_FINISHED_STATES;
+    let _: &[&str] = DEFAULT_SENSITIVE_KEYS;
 
     // 函数与泛型入口
     let _ = resolve_budget;

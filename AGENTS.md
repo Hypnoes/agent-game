@@ -254,25 +254,24 @@ Rust 里没有 `skip` 这个概念（`#[ignore]` 只用于"慢"，不用于"能�
 
 ---
 
-## 16. 依赖方向必须单向：`games → domain → infra`，且 `infra` 是独立 crate
+## 16. 分层边界必须由 crate 强制，不用源码扫描
 
-工作区四层，依赖只能向上：
+四个 crate，依赖只能向上：
 
 | crate | 放什么 | 不许依赖 |
 |---|---|---|
-| `agent-game-infra` | 预算、配置、错误、信号、等待、提示词、身份、参数解析 | `core` |
-| `agent-game-core` `domain/` | 引擎协议（`GameAbstraction`）、大厅匹配（`Lobby`）、会话生命周期、注册表、测试替身 | `games` |
-| `agent-game-core` `games/` | 具体规则（`GameImpl`） | — |
+| `agent-game-server-infra` | 预算、配置、错误、信号、等待、提示词、身份、参数解析 | `domain`、`core` |
+| `agent-game-server-domain` | 引擎协议（`GameAbstraction`）、大厅匹配（`Lobby`）、会话生命周期、注册表、测试替身 | `core` |
+| `agent-game-server-core` | 具体规则（`GameImpl`：大话骰、猜数字） | — |
+| `agent-game-server-mcp` / `-server` | 传输层 | 只依赖上面 |
 
-**`infra` 与 `core` 之间的方向由编译器强制。** `agent-game-infra` 的
-`Cargo.toml` 里没有 `agent-game-server-core`；任何反向依赖都会让 cargo 在
-循环依赖检查处直接失败：
+每条反向依赖都会让 cargo 在循环依赖检查处失败：
 
 ```
 error: cyclic package dependency: package `agent-game-server-core` depends on itself
 ```
 
-这一条**不能**靠源码扫描做到。历史经过三代绕过，每一代都合法可编译却漏检：
+**这条约束曾经用源码扫描守过，四代都被绕过。** 每一代都合法可编译却漏检：
 
 | 代 | 写法 | 为什么扫描器漏 |
 |---|---|---|
@@ -284,28 +283,27 @@ error: cyclic package dependency: package `agent-game-server-core` depends on it
 | 3 | `use super::super::domain::game::X;` | 相对路径，不含 `crate::` |
 | 3 | `use crate :: domain :: game :: X;` | token 间空格 |
 | 3 | `fn f(_: crate::domain::game::X) {}` | 根本不是 `use` |
+| 4 | `use crate as root; use root::games::X;` | 别名后引用，前缀完全不匹配 |
 
-字符串匹配无法穷尽一种语言的模块引用语法。**结论：凡是必须守住的分层边界，
-就用 crate 边界；只有代价明显不划算时才退回扫描器，并写清它守不住什么。**
+第四代是决定性的：**只要还能用任意别名到达上层，任何文本前缀检查都有下一代替换。**
+字符串匹配无法穷尽一种语言的模块引用语法。
 
-**`domain → games` 仍用扫描器**（`crates/agent-game-core/tests/layering.rs`）。
-两者都在 `core` 里，单独抽 crate 要付 workspace 成员、版本号、发布边界的成本，
-收益只是"编译器强制"对比"扫描器强制"。该扫描器已覆盖上表前两代全部写法与
-第三代的前两种，**但第三种（非 `use` 的表达式路径）是已知的、写进用例的盲区**：
-`known_gap_expression_paths_are_not_scanned` 故意断言它抓不到。若 `domain` 将来
-变复杂，应把它也抽成独立 crate，而不是继续加正则。
+**现在的结论**：`infra`、`domain`、`core` 各自独立成 crate，方向由编译器执行，
+不存在"某种写法绕过"的余地。`use crate as root` 在 `domain` crate 里只能到达
+`domain` 自己，`root::games` 根本不存在，编译期报
+`cannot find 'games' in 'root'`。
 
-**看门用例**：
-- `layering.rs::infra_crate_does_not_depend_on_core`——断言 infra 的 manifest
-  里没有 core（真正的执行者是 cargo 的循环依赖检查）
-- `layering.rs::domain_never_depends_on_games`
-- `layering.rs::the_guard_actually_detects_a_violation`——反向验证，否则断言
-  永远成立却什么也没守
-- `layering.rs::the_guard_catches_*`——上表各写法逐条
-- `layering.rs::known_gap_expression_paths_are_not_scanned`——盲区显式化
+**看门用例**（`crates/agent-game-core/tests/layering.rs`）：
+- `infra_does_not_depend_on_domain` / `infra_does_not_depend_on_core` /
+  `domain_does_not_depend_on_core`——断言 manifest 里没有反向依赖
+- `the_dependency_chain_is_core_to_domain_to_infra`——正向断言，防止
+  "拆开但不建立依赖"也能全绿
+- `cargo_really_rejects_a_reverse_dependency`——**真的调用 cargo**：临时往
+  `infra/Cargo.toml` 注入反向依赖，断言 cargo 报 `cyclic`，然后恢复。
+  前四条只读文本，这一条证明约束是构建系统执行的，不是我们在测试里模拟的
 
-**新增规则时的自检**：往 `agent-game-infra/Cargo.toml` 加一行
-`agent-game-server-core = { path = "../agent-game-core" }`，
+**新增规则时的自检**：往 `crates/agent-game-infra/Cargo.toml` 的
+`[dependencies]` 加一行 `agent-game-server-domain = { path = "../agent-game-domain" }`，
 `cargo build -p agent-game-server-infra` 必须报 `cyclic package dependency`。
 
 ---

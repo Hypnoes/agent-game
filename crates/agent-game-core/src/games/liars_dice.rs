@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use rand::RngExt as _;
 use serde_json::Value;
 
-use crate::domain::game::{GameEngine, PlayerMode, PlayerView, TimeoutEvent};
+use agent_game_server_domain::game::{GameEngine, PlayerMode, PlayerView, TimeoutEvent};
 use agent_game_server_infra::config::Config;
 use agent_game_server_infra::error::EngineError;
 use agent_game_server_infra::identity::check_player_identity;
@@ -923,10 +923,10 @@ impl GameEngine for LiarsDiceEngine {
         self.setup.clone()
     }
 
-    fn describe_tools(&self) -> Vec<crate::domain::game::ToolSpec> {
+    fn describe_tools(&self) -> Vec<agent_game_server_domain::game::ToolSpec> {
         use serde_json::json;
 
-        use crate::domain::game::ToolSpec;
+        use agent_game_server_domain::game::ToolSpec;
 
         let seat = json!({"type": "integer", "description": "你的玩家编号"});
         let token = json!({"type": "string", "description": "你的身份 token（必填）"});
