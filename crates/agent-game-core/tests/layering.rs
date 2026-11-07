@@ -76,7 +76,8 @@ fn use_statements(text: &str) -> Vec<(usize, String)> {
             let is_use = trimmed.starts_with("use ")
                 || trimmed.starts_with("pub use ")
                 || trimmed.starts_with("pub(crate) use ")
-                || trimmed.starts_with("pub(super) use ");
+                || trimmed.starts_with("pub(super) use ")
+                || trimmed.starts_with("pub(in");
             if !is_use {
                 continue;
             }
@@ -202,25 +203,45 @@ fn referenced_layers(statement: &str) -> BTreeSet<&'static str> {
             found.insert(layer);
             continue;
         }
-        // 分组导入：`crate::{domain::...}` / `crate::{ domain :: ...`
-        // 归一化会把多空格压成单空格，但 `{` 后面是否留空格取决于原文，
-        // 所以两种都查。
-        let grouped = [
-            format!("{{ {layer}::"),
-            format!("{{{layer}::"),
-            format!("{{ {layer} }}"),
-            format!("{{{layer}}}"),
-            format!(", {layer}::"),
-            format!(",{layer}::"),
-        ];
-        if grouped
-            .iter()
-            .any(|needle| statement.contains(needle.as_str()))
-        {
+        // 分组导入：每个逗号分隔的项都检查，包括别名与裸模块项。
+        if grouped_items(statement).iter().any(|item| {
+            let item = item.trim().trim_start_matches('{').trim_start();
+            item.strip_prefix(layer).is_some_and(|suffix| {
+                let suffix = suffix.trim_start();
+                suffix.is_empty() || suffix.starts_with("::") || suffix.starts_with("as ")
+            })
+        }) {
             found.insert(layer);
         }
     }
     found
+}
+
+/// 返回 `crate::{...}` 分组中的顶层项，忽略嵌套分组里的逗号。
+fn grouped_items(statement: &str) -> Vec<&str> {
+    let Some((_, rest)) = statement.split_once("crate::{") else {
+        return Vec::new();
+    };
+    let mut items = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+    for (index, ch) in rest.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' if depth == 0 => {
+                items.push(&rest[start..index]);
+                return items;
+            }
+            '}' => depth -= 1,
+            ',' if depth == 0 => {
+                items.push(&rest[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    items.push(&rest[start..]);
+    items
 }
 
 /// 收集某个层目录下的全部违规：`forbidden` 里的层名被引用了。
@@ -307,6 +328,14 @@ fn the_guard_catches_restricted_visibility() {
 }
 
 #[test]
+fn the_guard_catches_in_visibility_imports() {
+    let source = "pub(in crate::infra) use crate::domain::game::GameEngine;";
+    let statements = use_statements(source);
+    assert_eq!(statements.len(), 1);
+    assert!(referenced_layers(&statements[0].1).contains(DOMAIN));
+}
+
+#[test]
 fn the_guard_catches_aliased_module_imports() {
     let statement = "use crate::domain as dom;";
     assert!(referenced_layers(statement).contains(DOMAIN));
@@ -316,6 +345,15 @@ fn the_guard_catches_aliased_module_imports() {
 fn the_guard_catches_grouped_imports() {
     let statement = "use crate::{domain::game::GameEngine};";
     assert!(referenced_layers(statement).contains(DOMAIN));
+}
+
+#[test]
+fn the_guard_catches_grouped_aliases_and_later_items() {
+    assert!(referenced_layers("use crate::{domain as dom};").contains(DOMAIN));
+    assert!(referenced_layers("use crate::{infra::error::EngineError, domain};").contains(DOMAIN));
+    assert!(
+        referenced_layers("use crate::{infra::{error::EngineError}, domain};").contains(DOMAIN)
+    );
 }
 
 #[test]
