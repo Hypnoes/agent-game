@@ -113,7 +113,7 @@ fn placeholders_are_listed_once_in_order() {
 #[test]
 fn a_broken_template_has_no_placeholders() {
     let templates = Templates::from_pairs([("t".to_owned(), "{a".to_owned())]);
-    assert!(templates.placeholders("t").is_empty());
+    assert_eq!(templates.placeholders("t"), Vec::<&str>::new());
 }
 
 #[test]

@@ -581,7 +581,7 @@ mod tests {
     fn placeholders_are_collected_in_order() {
         let templates = Templates::from_pairs([("t".to_owned(), "{a} {b:g} {a}".to_owned())]);
         assert_eq!(templates.placeholders("t"), vec!["a", "b"]);
-        assert!(templates.placeholders("nope").is_empty());
+        assert_eq!(templates.placeholders("nope"), Vec::<&str>::new());
     }
 
     #[test]
