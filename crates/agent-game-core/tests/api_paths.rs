@@ -30,7 +30,7 @@ use agent_game_server_core::config::{
 };
 use agent_game_server_core::engine::{
     ActionParams, BoxedEngine, CreateParams, DEFAULT_FINISHED_STATES, DEFAULT_SENSITIVE_KEYS,
-    GameEngine, PlayerMode, PlayerView, ToolSpec,
+    GameEngine, PlayerMode, PlayerView, TimeoutEvent, ToolSpec,
 };
 use agent_game_server_core::error::{EngineError, SessionNotFound};
 use agent_game_server_core::games::{GuessNumberEngine, LiarsDiceEngine};
@@ -116,7 +116,9 @@ fn every_public_module_path_still_resolves() {
 #[test]
 fn nested_public_symbols_still_resolve() {
     use agent_game_server_core::budget::BudgetError;
-    use agent_game_server_core::games::guess_number::{Guess, GuessResult};
+    use agent_game_server_core::games::guess_number::{
+        Guess, GuessResult, default_finished_states,
+    };
     use agent_game_server_core::games::liars_dice::{Call, Player};
     use agent_game_server_core::identity::PlayerIdentity;
     use agent_game_server_core::signal::Subscription;
@@ -127,9 +129,19 @@ fn nested_public_symbols_still_resolve() {
     let _: Option<Call> = None;
     let _: Option<Player> = None;
     let _: Option<Subscription> = None;
+    let _: fn() -> &'static [&'static str] = default_finished_states;
 
     // trait 必须仍可作为约束使用
     fn _assert_identity<T: PlayerIdentity>(_value: T) {}
+}
+
+/// 从 `lib.rs` 顶层直接导出的常量。
+///
+/// `VERSION` 的路径是 `agent_game_server_core::VERSION`，不在任何模块里，
+/// 容易被上面几条漏掉。
+#[test]
+fn version_is_still_exported() {
+    let _: &str = agent_game_server_core::VERSION;
 }
 
 /// 顶层再导出也必须仍在——有些调用方直接 `use agent_game_server_core::GameManager`。
