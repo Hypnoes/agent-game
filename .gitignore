@@ -23,8 +23,9 @@ Thumbs.db
 .pytest_cache/
 .ruff_cache/
 
-# 变异测试产物
+# 变异测试产物（.old/.new 是 cargo-mutants 的备份目录，同样不该提交）
 mutants.out/
+mutants.out.*
 mutants-*.txt
 
 # 本地运行时输出

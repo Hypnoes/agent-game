@@ -81,10 +81,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-mutants
 
-      - name: 变异测试（infra / domain / core）
-        # 只对 core 与 infra 做全量：规则、预算、身份、等待都在这里，是"必须被
-        # 守住"的那两层。server/mcp 两层的传输行为已由集成测试覆盖，全量跑代价过高。
+      - name: 变异测试（core）
+        # 变异 core，但用**整个 workspace** 的测试来判断"这个变异有没有被抓住"。
         #
-        # `-p` 可以写多次。infra 拆出去之后，"预算解析 / 提示词渲染"这些必须被
-        # 守住的规则跟着搬走了，漏掉它等于少跑一半的看门。
-        run: cargo mutants -p agent-game-server-infra -p agent-game-server-domain -p agent-game-server-core --config .config/mutants.toml
+        # `--test-workspace true` 是必需的，不是可选优化。#5 把 infra / domain
+        # 抽成独立 crate 之后，有一部分看门用例天然住在别的 crate 里——例如
+        # `GuessNumberEngine::describe_tools()` 返回空表这个变异，会被
+        # `agent-game-mcp` 的 `tools.rs` 用例抓住（实测 2 条红）。默认行为是只跑
+        # 被测 crate 自己的测试，于是这两个变异体就"存活"了——不是没有看门人，
+        # 是看门人不在这个 crate 里。
+        #
+        # 只对 core 做全量：规则、预算、身份、等待都在这里，是"必须被守住"
+        # 的那一层。server/mcp 两层的传输行为已由集成测试覆盖，全量跑代价过高。
+        #
+        # infra / domain 暂不纳入：这两层的测试是从 core 整体搬过来的，还没有像
+        # core 那样做过变异收敛（core 的收敛过程见 docs/issues/004-riir.md，
+        # 五轮 144→0）。实测把两层加进来会活 57 个，那是"新测试还没做完"，
+        # 不该在纯结构重排的 PR 里顺带解决。收敛完成后再加回这一行。
+        run: cargo mutants -p agent-game-server-core --test-workspace true --config .config/mutants.toml
