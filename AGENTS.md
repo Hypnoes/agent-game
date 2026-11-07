@@ -254,6 +254,40 @@ Rust 里没有 `skip` 这个概念（`#[ignore]` 只用于"慢"，不用于"能�
 
 ---
 
+## 16. `core` 的依赖方向必须单向：`games → domain → infra`
+
+`crates/agent-game-core/src` 分三层，依赖只能向上：
+
+| 层 | 放什么 | 不许依赖 |
+|---|---|---|
+| `infra/` | 预算、配置、错误、信号、等待、提示词、身份、参数解析 | `domain`、`games` |
+| `domain/` | 引擎协议（`GameAbstraction`）、大厅匹配（`Lobby`）、会话生命周期、注册表、测试替身 | `games` |
+| `games/` | 具体规则（`GameImpl`） | — |
+
+**为什么需要这条**：目录结构本身不会阻止下一个人从 `infra/error.rs` 里
+`use crate::domain::...`。一旦发生，底层就开始认识上层，"把某个模块单独复用"
+或"替换掉某个上层"都要先拆一圈反向依赖才做得到。
+
+**症状（重排时真实发生过一次）**：`registry.rs` 与 `testing.rs` 最初被放进
+`infra/`，但它们实现/持有 `GameEngine`，于是 `infra` 反过来依赖了 `domain`。
+看门用例第一次运行就抓到了这两处，随之把它们移到 `domain/`。
+
+**现在**：`tests/layering.rs` 直接读源码文本，断言 `infra/` 下不出现
+`use crate::domain` / `use crate::games`。那里不解析 AST——要守的东西只是一个
+`use crate::<层>` 前缀，引入解析器的代价远超收益。
+
+**看门用例**：
+- `crates/agent-game-core/tests/layering.rs::infra_never_depends_on_domain`
+- `crates/agent-game-core/tests/layering.rs::infra_never_depends_on_games`
+- `layering.rs::the_guard_actually_detects_a_violation`——反向验证：把参数反过来
+  喂给同一个检查函数，必须能抓到 `domain` 对 `infra` 的依赖，否则前两条永远成立
+  却什么也没守
+
+**新增规则时的自检**：往 `infra/error.rs` 里手工加一行 `use crate::domain::...`，
+`cargo test -p agent-game-server-core --test layering` 必须红。
+
+---
+
 ## 附：写作与编码约定
 
 | 项 | 约定 |

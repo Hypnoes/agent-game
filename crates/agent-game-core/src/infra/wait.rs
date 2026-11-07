@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use crate::signal::{ChangeSignal, WaitOutcome};
+use crate::infra::signal::{ChangeSignal, WaitOutcome};
 
 /// 等待"条件成立"，最多 `budget`。
 ///

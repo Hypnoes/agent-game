@@ -8,7 +8,7 @@
 //! REST 先校验再等待，MCP 先等待再校验——同一个 token 打错的 `state` 调用，
 //! REST 立刻报错，MCP 白等满 55 秒。
 
-use crate::error::EngineError;
+use crate::infra::error::EngineError;
 
 /// 一名玩家对外可见的最小信息：身份校验只需要 token。
 pub trait PlayerIdentity {

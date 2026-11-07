@@ -16,8 +16,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::config::Config;
-use crate::engine::{BoxedEngine, CreateParams, PlayerMode};
+use crate::domain::game::{BoxedEngine, PlayerMode};
+use crate::infra::config::Config;
+use crate::infra::params::CreateParams;
 
 /// 一个已经注册的游戏。
 #[derive(Clone)]
@@ -168,7 +169,7 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::DummyEngine;
+    use crate::domain::testing::DummyEngine;
 
     fn dummy_meta(game_type: &'static str) -> GameMeta {
         GameMeta::new(game_type, PlayerMode::Single, move |_params, _config| {

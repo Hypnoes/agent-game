@@ -1,157 +1,38 @@
-//! Session 路由与生命周期。
-//!
-//! 职责：查注册表、创建 session（多人游戏自动匹配）、按 token 找到原对局、
-//! 超时结算、已结束对局的回收。
+//! 对局监督者：动作分发、超时结算、已结束对局的回收。
 //!
 //! 三处与 Python 版刻意不同的地方：
 //!
 //! 1. **引擎装在 `tokio::sync::Mutex` 里，持锁不跨 `.await`**。等待路径见
-//!    [`crate::wait`]：取条件、放锁、再等。Python 版是单线程 asyncio，一条
+//!    [`crate::infra::wait`]：取条件、放锁、再等。旧版是单线程 asyncio，一条
 //!    "取状态 → 渲染 → 返回"中间没有 await，天然不会有这种问题；Rust 里必须
 //!    以锁的边界显式表达。
 //! 2. **`check_timeouts` 逐 session 隔离错误**。一个坏引擎返回 `Err` 只影响它
-//!    自己——那条"坏引擎不能杀死整个服务"的约束从 `except Exception` 变成类型上的
-//!    `Result`。
+//!    自己——那条"坏引擎不能杀死整个服务"的约束从 `except Exception` 变成类型上
+//!    的 `Result`。
 //! 3. **快照是信封**：`{session_id, game_type, display_name, created_at, state}`。
-//!    框架字段不再塞进引擎的 JSON，污染在结构上不可能发生（Python 版 P1-4
-//!    就是直接往 `get_public_state()` 的返回值里写 `session_id`）。
+//!    框架字段不再塞进引擎的 JSON，污染在结构上不可能发生。
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
-use serde_json::Value;
-use tokio::sync::Mutex as AsyncMutex;
-
-use crate::config::Config;
-use crate::engine::{BoxedEngine, CreateParams, TimeoutEvent};
-use crate::error::SessionNotFound;
-use crate::registry::{GameMeta, Registry};
-
-/// session 标识：UUID v4 的前 8 个字符。
-pub type SessionId = String;
+use crate::domain::registry::Registry;
+use crate::domain::session::{Session, SessionId};
+use crate::domain::snapshot::{SessionSnapshot, TimeoutRecord};
+use crate::infra::config::Config;
+use crate::infra::error::SessionNotFound;
 
 /// 已上报过的超时事件的缓存上限。
 const MAX_SEEN_EXPIRED: usize = 512;
 
-/// 一个进行中的对局。
-#[derive(Debug)]
-pub struct Session {
-    pub id: SessionId,
-    pub game_type: &'static str,
-    pub display_name: &'static str,
-    pub created_at: Instant,
-    /// 引擎。所有访问都必须先拿这把锁，且**不要跨 await 持有**。
-    pub engine: AsyncMutex<BoxedEngine>,
-    /// 创建参数（不含 `player_token`），用于"同一张桌子"的匹配判断。
-    pub setup: CreateParams,
-    finished_at: Mutex<Option<Instant>>,
-    poisoned: AtomicBool,
-}
-
-impl Session {
-    fn new(
-        id: SessionId,
-        meta: &GameMeta,
-        engine: BoxedEngine,
-        setup: CreateParams,
-        now: Instant,
-    ) -> Self {
-        Self {
-            id,
-            game_type: meta.game_type,
-            display_name: meta.display_name,
-            created_at: now,
-            engine: AsyncMutex::new(engine),
-            setup,
-            finished_at: Mutex::new(None),
-            poisoned: AtomicBool::new(false),
-        }
-    }
-
-    /// 引擎是否已经 panic 过。毒化后的对局不再接受动作。
-    #[must_use]
-    pub fn is_poisoned(&self) -> bool {
-        self.poisoned.load(Ordering::SeqCst)
-    }
-
-    /// 标记引擎已毒化。
-    pub fn poison(&self) {
-        self.poisoned.store(true, Ordering::SeqCst);
-    }
-
-    fn finished_at(&self) -> Option<Instant> {
-        self.finished_at.lock().ok().and_then(|guard| *guard)
-    }
-
-    fn set_finished_at(&self, value: Option<Instant>) {
-        if let Ok(mut guard) = self.finished_at.lock() {
-            *guard = value;
-        }
-    }
-}
-
-/// 一次超时结算的结果。
-#[derive(Clone, Debug)]
-pub struct TimeoutRecord {
-    pub session_id: SessionId,
-    pub game_type: &'static str,
-    pub event: TimeoutEvent,
-}
-
-impl TimeoutRecord {
-    /// 转成事件 JSON：`{session_id, game_type, type, expired?, loser?}`。
-    #[must_use]
-    pub fn to_json(&self) -> Value {
-        let mut object = match self.event.to_json() {
-            Value::Object(map) => map,
-            _ => serde_json::Map::new(),
-        };
-        object.insert(
-            "session_id".to_owned(),
-            Value::String(self.session_id.clone()),
-        );
-        object.insert(
-            "game_type".to_owned(),
-            Value::String(self.game_type.to_owned()),
-        );
-        Value::Object(object)
-    }
-}
-
-/// admin 列表里的一行。
-#[derive(Clone, Debug)]
-pub struct SessionSnapshot {
-    pub session_id: SessionId,
-    pub game_type: &'static str,
-    pub display_name: &'static str,
-    pub created_at_ms: u128,
-    /// 引擎的 admin 视图（含秘密）。公开出口不会用它。
-    pub state: Value,
-}
-
-impl SessionSnapshot {
-    #[must_use]
-    pub fn to_json(&self) -> Value {
-        serde_json::json!({
-            "session_id": self.session_id,
-            "game_type": self.game_type,
-            "display_name": self.display_name,
-            "created_at": self.created_at_ms,
-            "state": self.state,
-        })
-    }
-}
-
 /// Session 路由与生命周期。
 #[derive(Debug)]
 pub struct GameManager {
-    registry: Registry,
-    config: Config,
-    sessions: RwLock<BTreeMap<SessionId, Arc<Session>>>,
+    pub(crate) registry: Registry,
+    pub(crate) config: Config,
+    pub(crate) sessions: RwLock<BTreeMap<SessionId, Arc<Session>>>,
     /// `(session_id, 事件类型)` —— 同一个超时事件不跨多次轮询重复上报。
-    seen_expired: Mutex<Vec<(SessionId, &'static str)>>,
+    pub(crate) seen_expired: Mutex<Vec<(SessionId, &'static str)>>,
     /// 起始时刻，`created_at_ms` 由它与 session 的 `Instant` 差值算出。
     started: Instant,
 }
@@ -212,89 +93,6 @@ impl GameManager {
         }
     }
 
-    /// 创建或复用一个 session。
-    ///
-    /// 复用顺序（与 Python 版一致）：
-    /// 1. 带 `player_token` 且命中某个**同类型、未结束**对局里的玩家 → 回到那一局。
-    /// 2. 多人游戏里有一个 `waiting` 且创建参数兼容的对局 → 加入那一桌。
-    /// 3. 否则新建。
-    ///
-    /// # Errors
-    /// 未知游戏类型，或构造函数拒绝了参数。
-    pub async fn create(
-        &self,
-        game_type: &str,
-        params: CreateParams,
-        now: Instant,
-    ) -> Result<Arc<Session>, String> {
-        if !self.registry.contains(game_type) {
-            let known = self.registry.game_types();
-            return Err(format!("未知游戏类型: {game_type}。已注册: {known:?}"));
-        }
-
-        let mut setup = params.clone();
-        let player_token = setup
-            .raw
-            .get("player_token")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned);
-        setup.raw.remove("player_token");
-
-        // `player_name` 是**动作参数**，不是建桌配置。
-        //
-        // 留在 `setup` 里会让"两个人想坐同一桌"永远匹配失败：他们的名字不同，
-        // `compatible` 一比较就判为不兼容，于是各开一桌。这个坑在传输层只透传
-        // `player_token` 的时期被掩盖了——那时 `player_name` 根本到不了这里；
-        // 把创建参数改成整体透传之后它立刻现形。
-        setup.raw.remove("player_name");
-
-        let existing = self.session_list();
-
-        // 1. 断线重连：只认同类型、且未结束的对局
-        if let Some(token) = player_token.as_deref() {
-            for session in &existing {
-                if session.game_type != game_type || self.is_finished(session).await {
-                    continue;
-                }
-                let engine = session.engine.lock().await;
-                if engine.find_player_by_token(token).is_some() {
-                    drop(engine);
-                    return Ok(Arc::clone(session));
-                }
-            }
-        }
-
-        // 2. 多人游戏：加入等待中的、参数兼容的桌子
-        let multi = self
-            .registry
-            .get(game_type)
-            .is_some_and(|meta| meta.player_mode.is_multi());
-        if multi {
-            for session in &existing {
-                if session.game_type != game_type {
-                    continue;
-                }
-                let engine = session.engine.lock().await;
-                let waiting = engine.phase() == "waiting" && !engine.is_finished();
-                drop(engine);
-                if waiting && compatible(&session.setup, &setup) {
-                    return Ok(Arc::clone(session));
-                }
-            }
-        }
-
-        // 3. 新建
-        let engine = self.registry.create(game_type, &setup, &self.config)?;
-        let Some(meta) = self.registry.get(game_type) else {
-            return Err(format!("未知游戏类型: {game_type}"));
-        };
-        let session = Arc::new(Session::new(new_session_id(), meta, engine, setup, now));
-        if let Ok(mut map) = self.sessions.write() {
-            map.insert(session.id.clone(), Arc::clone(&session));
-        }
-        Ok(session)
-    }
-
     /// 对局是否已结束。
     ///
     /// 公开版本：传输层要判断"这局还能不能接受动作"，但不需要碰引擎内部。
@@ -304,7 +102,7 @@ impl GameManager {
     }
 
     /// 取 session 快照列表（Arc 的克隆），供调用方在锁外逐个处理。
-    fn session_list(&self) -> Vec<Arc<Session>> {
+    pub(crate) fn session_list(&self) -> Vec<Arc<Session>> {
         self.sessions
             .read()
             .map(|map| map.values().cloned().collect())
@@ -335,7 +133,7 @@ impl GameManager {
     /// `Value` 序列化失败会返回 `None`（比如引擎塞了会 panic 的 `Debug` 实现），
     /// 由调用方决定强制广播——一次序列化失败不能把轮询循环打死。
     pub async fn state_signature(&self) -> Option<String> {
-        let rows: Vec<Value> = self
+        let rows: Vec<serde_json::Value> = self
             .snapshots()
             .await
             .into_iter()
@@ -483,8 +281,8 @@ impl GameManager {
         &self,
         session: &Arc<Session>,
         action: &str,
-        params: crate::engine::ActionParams,
-    ) -> Result<crate::engine::PlayerView, crate::error::EngineError> {
+        params: crate::infra::params::ActionParams,
+    ) -> Result<crate::domain::game::PlayerView, crate::infra::error::EngineError> {
         let mut engine = session.engine.lock().await;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             engine.handle_action(action, params)
@@ -500,7 +298,7 @@ impl GameManager {
                     action,
                     "引擎在 handle_action 中 panic，对局标记为 poisoned"
                 );
-                Err(crate::error::EngineError::Internal(
+                Err(crate::infra::error::EngineError::Internal(
                     "引擎在处理动作时崩溃".to_owned(),
                 ))
             }
@@ -508,34 +306,19 @@ impl GameManager {
     }
 }
 
-/// 参数兼容：请求里出现的每个键，只要已存在的 session 也给了同名键就必须相等。
-///
-/// 引擎没声明的键（比如它不认识的调参）忽略——与 Python 版一致，
-/// 这样新增请求参数不会把老引擎挤出匹配池。
-fn compatible(existing: &CreateParams, wanted: &CreateParams) -> bool {
-    for (key, value) in &wanted.raw {
-        if let Some(current) = existing.raw.get(key)
-            && current != value
-        {
-            return false;
-        }
-    }
-    true
-}
-
-fn new_session_id() -> SessionId {
-    uuid::Uuid::new_v4().simple().to_string()[..8].to_owned()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc as TestArc;
 
-    use crate::engine::{ActionParams, GameEngine, PlayerMode};
-    use crate::error::EngineError;
-    use crate::signal::ChangeSignal;
-    use crate::testing::DummyEngine;
+    use crate::domain::game::{BoxedEngine, GameEngine, PlayerMode, TimeoutEvent};
+    use crate::domain::lobby::{compatible, new_session_id};
+    use crate::domain::registry::GameMeta;
+    use crate::domain::testing::DummyEngine;
+    use crate::infra::error::EngineError;
+    use crate::infra::params::{ActionParams, CreateParams};
+    use crate::infra::signal::ChangeSignal;
+    use serde_json::Value;
 
     fn meta(game_type: &'static str, mode: PlayerMode, phase: &'static str) -> GameMeta {
         GameMeta::new(game_type, mode, move |_params, _config| {

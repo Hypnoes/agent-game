@@ -11,14 +11,14 @@ use std::time::{Duration, Instant};
 use rand::RngExt as _;
 use serde_json::Value;
 
-use crate::config::Config;
-use crate::engine::{
-    ActionParams, CreateParams, DEFAULT_FINISHED_STATES, GameEngine, PlayerMode, PlayerView,
-    TimeoutEvent,
+use crate::domain::game::{
+    DEFAULT_FINISHED_STATES, GameEngine, PlayerMode, PlayerView, TimeoutEvent,
 };
-use crate::error::EngineError;
-use crate::prompt::{Ctx, PromptStore};
-use crate::signal::ChangeSignal;
+use crate::infra::config::Config;
+use crate::infra::error::EngineError;
+use crate::infra::params::{ActionParams, CreateParams};
+use crate::infra::prompt::{Ctx, PromptStore};
+use crate::infra::signal::ChangeSignal;
 
 const PROMPT_TOML: &str = include_str!("../../assets/guess_number_prompts.toml");
 
@@ -456,10 +456,10 @@ impl GameEngine for GuessNumberEngine {
         self.setup.clone()
     }
 
-    fn describe_tools(&self) -> Vec<crate::engine::ToolSpec> {
+    fn describe_tools(&self) -> Vec<crate::domain::game::ToolSpec> {
         use serde_json::json;
 
-        use crate::engine::ToolSpec;
+        use crate::domain::game::ToolSpec;
 
         vec![
             ToolSpec::new(
