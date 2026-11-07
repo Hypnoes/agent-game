@@ -4,17 +4,30 @@
 //! 两个文件、把 `manager.rs` 拆成四个，编译期只在**调用方**那里才报错，
 //! 而 core 自己的测试可能全部绿——因为它们早就跟着改了。
 //!
-//! 这个文件只做一件事：把重排前 `lib.rs` 公开过的**每一个模块路径**都
-//! import 一遍。少一个就编译失败。它不测行为，测的是"路径还在"。
+//! 这个文件只做一件事：把重排前 `lib.rs` 公开过的**每一个符号**都 import 一遍。
+//! 少一个就编译失败。它不测行为，测的是"路径还在"。
 //!
-//! 清单来源：`git show python-v0.3.0..HEAD` 之前的 `crates/agent-game-core/src/lib.rs`，
-//! 共 12 个 `pub mod`。
+//! 清单来源：重排前的 `crates/agent-game-core/src/lib.rs`——12 个 `pub mod`，
+//! 以及各模块内**曾经 pub 过**的符号。后者容易被忽略：模块路径还在，但里面的
+//! 某个 `pub const` / `pub fn` 被搬走或私有化了，调用方照样编译失败。
+//!
+//! 这份清单是被 review 逐轮补充的。缺哪个符号就补哪个，不要删。
+//!
+//! # 一个刻意的例外
+//!
+//! 重排前有 51 个公开符号，这里探了 50 个。漏掉的是
+//! `games::state_machine::Transitions`——它是**死代码**（整个 workspace 零调用者，
+//! 只有自己的单元测试引用），已排进后续 issue 删除。给它加探针等于把一个即将
+//! 消失的符号固化成契约。删掉那个模块时，这里的数量说明会一起更新。
 
 #![allow(unused_imports, clippy::unwrap_used, clippy::expect_used)]
 
 // ── 12 个公开模块路径，逐个必须有 ──
 use agent_game_server_core::budget::resolve_budget;
-use agent_game_server_core::config::{Config, DEFAULT_BLOCK_BUDGET_SECS};
+use agent_game_server_core::config::{
+    Config, DEFAULT_BLOCK_BUDGET_SECS, DEFAULT_FINISHED_RETENTION_SECS, DEFAULT_POLL_INTERVAL_MS,
+    DEFAULT_SESSION_CACHE_CAP, DEFAULT_TURN_TIMEOUT_SECS,
+};
 use agent_game_server_core::engine::{
     ActionParams, BoxedEngine, CreateParams, DEFAULT_FINISHED_STATES, DEFAULT_SENSITIVE_KEYS,
     GameEngine, PlayerMode, PlayerView, ToolSpec,
@@ -25,7 +38,9 @@ use agent_game_server_core::identity::check_player_identity;
 use agent_game_server_core::manager::{
     GameManager, Session, SessionId, SessionSnapshot, TimeoutRecord,
 };
-use agent_game_server_core::prompt::{Ctx, PromptStore};
+use agent_game_server_core::prompt::{
+    BROKEN_PREFIX, Ctx, MISSING_PREFIX, PromptStore, Templates, Value, parse_toml, render_template,
+};
 use agent_game_server_core::registry::{GameMeta, Registry};
 use agent_game_server_core::signal::{ChangeSignal, WaitOutcome};
 use agent_game_server_core::testing::DummyEngine;
@@ -66,6 +81,8 @@ fn every_public_module_path_still_resolves() {
     // 函数与泛型入口
     let _ = resolve_budget;
     let _ = check_player_identity::<&str>;
+    let _ = parse_toml;
+    let _ = render_template;
     // `wait_for` 是泛型 async fn；在函数体内命名它即证路径可解析
     #[allow(dead_code)]
     async fn _proves_wait_for(signal: &ChangeSignal, budget: std::time::Duration) -> WaitOutcome {
@@ -76,6 +93,43 @@ fn every_public_module_path_still_resolves() {
 
     // trait 必须仍可作为边界使用
     fn _assert_trait_object_safe(_engine: &dyn GameEngine) {}
+
+    // `config` 模块的四个历史常量 + 一个换算函数
+    let _: u64 = DEFAULT_TURN_TIMEOUT_SECS;
+    let _: u64 = DEFAULT_FINISHED_RETENTION_SECS;
+    let _: usize = DEFAULT_SESSION_CACHE_CAP;
+    let _: u64 = DEFAULT_POLL_INTERVAL_MS;
+    let _ = agent_game_server_core::config::secs_f64;
+
+    // `prompt` 模块的两个前缀常量、值枚举、模板表
+    let _: &str = MISSING_PREFIX;
+    let _: &str = BROKEN_PREFIX;
+    let _: fn(i64) -> Value = Value::Int;
+    let _: Option<Templates> = None;
+}
+
+/// 模块内**嵌套路径**上的公开符号。
+///
+/// 上面那个用例只把符号从模块根 import 一遍。这一步补的是另一类回归：
+/// 符号本身还在，但它所在的**子模块路径**变了（比如 `budget::BudgetError`
+/// 被挪到 `budget::error::BudgetError`）——调用方照样编译失败。
+#[test]
+fn nested_public_symbols_still_resolve() {
+    use agent_game_server_core::budget::BudgetError;
+    use agent_game_server_core::games::guess_number::{Guess, GuessResult};
+    use agent_game_server_core::games::liars_dice::{Call, Player};
+    use agent_game_server_core::identity::PlayerIdentity;
+    use agent_game_server_core::signal::Subscription;
+
+    let _: Option<BudgetError> = None;
+    let _: Option<Guess> = None;
+    let _: Option<GuessResult> = None;
+    let _: Option<Call> = None;
+    let _: Option<Player> = None;
+    let _: Option<Subscription> = None;
+
+    // trait 必须仍可作为约束使用
+    fn _assert_identity<T: PlayerIdentity>(_value: T) {}
 }
 
 /// 顶层再导出也必须仍在——有些调用方直接 `use agent_game_server_core::GameManager`。
