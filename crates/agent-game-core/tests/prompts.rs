@@ -72,18 +72,18 @@ fn non_finite_floats_do_not_panic() {
 fn len_and_is_empty_track_the_actual_size() {
     let empty = Templates::default();
     assert_eq!(empty.len(), 0);
-    assert!(empty.is_empty());
+    assert!(empty.is_empty(), "默认模板表应当是空的");
 
     let one = Templates::from_pairs([("a".to_owned(), "x".to_owned())]);
     assert_eq!(one.len(), 1);
-    assert!(!one.is_empty());
+    assert!(!one.is_empty(), "放入一项后不该是空的");
 
     let two = Templates::from_pairs([
         ("a".to_owned(), "x".to_owned()),
         ("b".to_owned(), "y".to_owned()),
     ]);
     assert_eq!(two.len(), 2);
-    assert!(!two.is_empty());
+    assert!(!two.is_empty(), "放入两项后不该是空的");
 }
 
 #[test]
@@ -113,7 +113,7 @@ fn placeholders_are_listed_once_in_order() {
 #[test]
 fn a_broken_template_has_no_placeholders() {
     let templates = Templates::from_pairs([("t".to_owned(), "{a".to_owned())]);
-    assert!(templates.placeholders("t").is_empty());
+    assert_eq!(templates.placeholders("t"), Vec::<&str>::new());
 }
 
 #[test]
@@ -144,7 +144,7 @@ fn a_snapshot_is_independent_of_later_reloads() {
 fn insert_overwrites_an_existing_field() {
     let mut ctx = Ctx::new().with("n", 1i64);
     assert_eq!(ctx.len(), 1);
-    assert!(!ctx.is_empty());
+    assert!(!ctx.is_empty(), "填入一项后不该是空的");
 
     ctx.insert("n", 2i64);
     assert_eq!(ctx.len(), 1, "同名键覆盖，不新增");
@@ -158,7 +158,7 @@ fn insert_overwrites_an_existing_field() {
 fn an_empty_context_reports_itself_as_empty() {
     let ctx = Ctx::new();
     assert_eq!(ctx.len(), 0);
-    assert!(ctx.is_empty());
+    assert!(ctx.is_empty(), "新建的上下文应当是空的");
     assert_eq!(ctx.get("anything"), None);
 }
 

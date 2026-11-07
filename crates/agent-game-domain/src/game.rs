@@ -1,18 +1,18 @@
-//! 引擎协议。
+//! 游戏抽象：引擎协议与它交换的类型。
 //!
 //! 设计要点，逐条对应 Python 版踩过的坑：
 //!
 //! 1. **`admin_view` 与 `public_view` 分别构造**，不再"返回一份全量 JSON、
-//!    再按名字删掉秘密键"。Python 版的剥离是
-//!    `{k: v for k, v in state.items() if k not in secrets}`：`secret_keys` 里
+//!    再按名字删掉秘密键"。旧版的剥离是
+//!    `{k: v for k, v in state.items() if k not in secrets}`：秘密名单里
 //!    拼错一个字母（`all_dices`），秘密就原样漏给 Agent，运行期没有任何反应。
 //!    改成构造之后，写漏一个字段的后果是"测试红"，不是"静默泄密"。
-//! 2. **纯同步**。等待语义上移到框架的 [`crate::wait`]，引擎只回答"现在轮到他了吗"
-//!    与"变了就叫我"。于是 `dyn GameEngine` 可以直接用，不需要 `async-trait`、
-//!    不需要 `Box<dyn Future>`。
+//! 2. **纯同步**。等待语义上移到框架的 [`agent_game_server_infra::wait`]，引擎只回答
+//!    "现在轮到他了吗"与"变了就叫我"。于是 `dyn GameEngine` 可以直接用，
+//!    不需要 `async-trait`、不需要 `Box<dyn Future>`。
 //! 3. **`check_timeout` 返回 `Result`**。布尔返回值无法区分"没事"与"我坏了"，
-//!    Python 版靠 `except Exception` 兜住坏引擎；这里让类型表达同一件事。
-//! 4. 可选能力用默认实现表达。Python 版把可选方法的签名放进 `if TYPE_CHECKING:`
+//!    旧版靠 `except Exception` 兜住坏引擎；这里让类型表达同一件事。
+//! 4. 可选能力用默认实现表达。旧版把可选方法的签名放进 `if TYPE_CHECKING:`
 //!    是为了避免 `hasattr` 永远为真——那是动态语言的补丁，Rust 里不需要。
 
 use std::sync::Arc;
@@ -20,9 +20,10 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-use crate::error::EngineError;
-use crate::prompt::{Ctx, PromptStore};
-use crate::signal::ChangeSignal;
+use agent_game_server_infra::error::EngineError;
+use agent_game_server_infra::params::{ActionParams, CreateParams};
+use agent_game_server_infra::prompt::{Ctx, PromptStore};
+use agent_game_server_infra::signal::ChangeSignal;
 
 /// 引擎没有声明时的默认终态名。
 pub const DEFAULT_FINISHED_STATES: &[&str] = &["finished", "won", "lost"];
@@ -41,170 +42,6 @@ impl PlayerMode {
     #[must_use]
     pub fn is_multi(self) -> bool {
         matches!(self, Self::Multi)
-    }
-}
-
-/// 创建参数：请求体里的任意 JSON，由各引擎自己解释。
-#[derive(Clone, Debug, Default)]
-pub struct CreateParams {
-    pub raw: serde_json::Map<String, Value>,
-}
-
-impl CreateParams {
-    #[must_use]
-    pub fn new(raw: serde_json::Map<String, Value>) -> Self {
-        Self { raw }
-    }
-
-    #[must_use]
-    pub fn get(&self, key: &str) -> Option<&Value> {
-        self.raw.get(key)
-    }
-
-    /// 取一个整数参数。
-    ///
-    /// # Errors
-    /// 键存在但不是整数（`bool` 不被当作整数）。
-    pub fn get_i64(&self, key: &str) -> Result<Option<i64>, String> {
-        match self.raw.get(key) {
-            None => Ok(None),
-            Some(Value::Number(number)) => number
-                .as_i64()
-                .map(Some)
-                .ok_or_else(|| format!("{key} 必须是整数，收到 {number}")),
-            Some(other) => Err(format!("{key} 必须是整数，收到 {other}")),
-        }
-    }
-
-    /// 取一个字符串参数。
-    ///
-    /// # Errors
-    /// 键存在但不是字符串。
-    pub fn get_str(&self, key: &str) -> Result<Option<&str>, String> {
-        match self.raw.get(key) {
-            None => Ok(None),
-            Some(Value::String(text)) => Ok(Some(text.as_str())),
-            Some(other) => Err(format!("{key} 必须是字符串，收到 {other}")),
-        }
-    }
-
-    /// 去掉某些键（`player_token` 不参与配置比较）。
-    #[must_use]
-    pub fn without(&self, key: &str) -> Self {
-        let mut raw = self.raw.clone();
-        raw.remove(key);
-        Self { raw }
-    }
-}
-
-impl From<serde_json::Map<String, Value>> for CreateParams {
-    fn from(raw: serde_json::Map<String, Value>) -> Self {
-        Self { raw }
-    }
-}
-
-/// 动作参数。`timeout` 在这里已经被剥掉——它只属于传输层的等待预算。
-#[derive(Clone, Debug, Default)]
-pub struct ActionParams {
-    pub raw: serde_json::Map<String, Value>,
-}
-
-impl ActionParams {
-    #[must_use]
-    pub fn new(raw: serde_json::Map<String, Value>) -> Self {
-        Self { raw }
-    }
-
-    #[must_use]
-    pub fn get(&self, key: &str) -> Option<&Value> {
-        self.raw.get(key)
-    }
-
-    /// 取必填整数。
-    ///
-    /// # Errors
-    /// 缺失、或不是整数。
-    pub fn require_i64(&self, key: &str) -> Result<i64, EngineError> {
-        match self.raw.get(key) {
-            None => Err(EngineError::invalid(format!("缺少必填参数: {key}"))),
-            Some(Value::Number(number)) => number
-                .as_i64()
-                .ok_or_else(|| EngineError::invalid(format!("{key} 必须是整数，收到 {number}"))),
-            Some(other) => Err(EngineError::invalid(format!(
-                "{key} 必须是整数，收到 {other}"
-            ))),
-        }
-    }
-
-    /// 取可选整数。
-    ///
-    /// # Errors
-    /// 存在但不是整数。
-    pub fn optional_i64(&self, key: &str) -> Result<Option<i64>, EngineError> {
-        match self.raw.get(key) {
-            None => Ok(None),
-            Some(Value::Number(number)) => Ok(number.as_i64()),
-            Some(other) => Err(EngineError::invalid(format!(
-                "{key} 必须是整数，收到 {other}"
-            ))),
-        }
-    }
-
-    /// 取必填字符串。
-    ///
-    /// # Errors
-    /// 缺失、或不是字符串。
-    pub fn require_str(&self, key: &str) -> Result<&str, EngineError> {
-        match self.raw.get(key) {
-            None => Err(EngineError::invalid(format!("缺少必填参数: {key}"))),
-            Some(Value::String(text)) => Ok(text),
-            Some(other) => Err(EngineError::invalid(format!(
-                "{key} 必须是字符串，收到 {other}"
-            ))),
-        }
-    }
-
-    /// 取可选字符串（缺失与 `null` 都当没有）。
-    ///
-    /// # Errors
-    /// 存在但不是字符串。
-    pub fn optional_str(&self, key: &str) -> Result<Option<&str>, EngineError> {
-        match self.raw.get(key) {
-            None | Some(Value::Null) => Ok(None),
-            Some(Value::String(text)) => Ok(Some(text)),
-            Some(other) => Err(EngineError::invalid(format!(
-                "{key} 必须是字符串，收到 {other}"
-            ))),
-        }
-    }
-
-    /// 取玩家编号。多人动作必填，单人动作可省略。
-    ///
-    /// # Errors
-    /// 存在但不是非负整数。
-    pub fn player_index(&self) -> Result<Option<usize>, EngineError> {
-        match self.raw.get("player_index") {
-            None | Some(Value::Null) => Ok(None),
-            Some(Value::Number(number)) => {
-                let Some(value) = number.as_i64() else {
-                    return Err(EngineError::InvalidIndex(number.to_string()));
-                };
-                if value < 0 {
-                    // 负索引会绕回最后一名玩家，等于凭空拿到对手的骰子
-                    return Err(EngineError::InvalidIndex(value.to_string()));
-                }
-                Ok(Some(usize::try_from(value).unwrap_or(usize::MAX)))
-            }
-            Some(other) => Err(EngineError::InvalidIndex(other.to_string())),
-        }
-    }
-
-    /// 取 `player_token`。
-    ///
-    /// # Errors
-    /// 存在但不是字符串。
-    pub fn player_token(&self) -> Result<Option<&str>, EngineError> {
-        self.optional_str("player_token")
     }
 }
 
@@ -283,13 +120,17 @@ impl TimeoutEvent {
 /// 引擎协议。
 ///
 /// 所有方法都是同步的；需要等待的能力由 [`GameEngine::signal`] 与
-/// [`GameEngine::is_ready_for`] 提供，循环在 [`crate::wait::wait_for`]。
+/// [`GameEngine::is_ready_for`] 提供，循环在 [`agent_game_server_infra::wait::wait_for`]。
 pub trait GameEngine: std::fmt::Debug + Send {
     /// 机器键。必须与注册表里的键一致，也是 MCP 工具名前缀。
     fn game_type(&self) -> &'static str;
 
     /// 单人还是多人。
-    fn player_mode(&self) -> PlayerMode;
+    ///
+    /// 默认单人：多数游戏是单人即时对局，不必为它写一行。
+    fn player_mode(&self) -> PlayerMode {
+        PlayerMode::Single
+    }
 
     /// 该引擎的终态名集合。
     fn finished_states(&self) -> &'static [&'static str] {
@@ -311,7 +152,12 @@ pub trait GameEngine: std::fmt::Debug + Send {
     }
 
     /// admin 视图：含全部秘密信息，只有鉴权通过的 admin 出口能拿到。
-    fn admin_view(&self) -> Value;
+    ///
+    /// 默认转调 [`GameEngine::public_view`]：没有秘密字段的引擎不需要把同一个
+    /// 视图写两遍。
+    fn admin_view(&self) -> Value {
+        self.public_view()
+    }
 
     /// 公开视图：**由构造保证**不含敏感字段。
     fn public_view(&self) -> Value;
@@ -334,9 +180,13 @@ pub trait GameEngine: std::fmt::Debug + Send {
 
     /// 超时结算。
     ///
+    /// 默认无事发生：没有回合制超时概念的引擎不必写这一行。
+    ///
     /// # Errors
     /// 引擎内部故障。调用方必须隔离它，不能让一个坏引擎中断整轮结算。
-    fn check_timeout(&mut self, now: Instant) -> Result<Option<TimeoutEvent>, EngineError>;
+    fn check_timeout(&mut self, _now: Instant) -> Result<Option<TimeoutEvent>, EngineError> {
+        Ok(None)
+    }
 
     /// 状态变更信号。
     ///

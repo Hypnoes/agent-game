@@ -37,13 +37,20 @@ flowchart TB
     style Server fill:#d2991d22,stroke:#d2991d
 ```
 
-三个 crate，职责单一：
+五个 crate，职责单一，依赖方向单向：
 
 | crate | 职责 | 依赖 |
 |---|---|---|
-| `agent-game-server-core` | 规则、预算、身份、等待原语、提示词、注册表、session 路由 | 无网络、无 axum |
+| `agent-game-server-infra` | 预算、配置、错误、身份、等待原语、提示词、参数解析 | 无网络、无 axum |
+| `agent-game-server-domain` | 引擎协议、大厅匹配、会话生命周期、注册表、监督者 | infra |
+| `agent-game-server-core` | 具体规则（大话骰、猜数字） | domain + infra |
 | `agent-game-server-mcp` | `rmcp::ServerHandler` 适配：工具定义 + 一次调用 | core + rmcp |
 | `agent-game-server-server` | axum app：REST + Admin + WS + `/mcp` 挂载 + 轮询 | core + mcp + axum |
+
+分层**由 crate 边界强制**，不靠源码扫描：每层都不依赖它上面那层，反向依赖会让
+cargo 在循环依赖检查处直接失败。这条约束尝试过用字符串匹配守，四代都被绕过
+（`super::super::`、`crate ::`、表达式里的类型路径、`use crate as root`），
+因为文本匹配无法穷尽 Rust 的模块引用语法。见 `AGENTS.md` 第 16 条。
 
 三条入口共用同一份 `AppState`（注册表、manager、配置、admin token），因此"谁是谁"的判断不会在三条路径上分叉。
 

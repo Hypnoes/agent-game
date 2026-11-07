@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/agent-game-infra",
+    "crates/agent-game-domain",
     "crates/agent-game-core",
     "crates/agent-game-mcp",
     "crates/agent-game-server",
@@ -15,6 +17,8 @@ authors = ["agent-game contributors"]
 repository = "https://github.com/Hypnoes/agent-game"
 
 [workspace.dependencies]
+agent-game-server-infra = { path = "crates/agent-game-infra" }
+agent-game-server-domain = { path = "crates/agent-game-domain" }
 agent-game-server-core = { path = "crates/agent-game-core" }
 agent-game-server-mcp = { path = "crates/agent-game-mcp" }
 

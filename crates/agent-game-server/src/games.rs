@@ -319,8 +319,8 @@ mod tests {
 
     #[test]
     fn empty_body_is_an_empty_object() {
-        assert!(parse_object(b"").unwrap().is_empty());
-        assert!(parse_object(b"  \n ").unwrap().is_empty());
+        assert_eq!(parse_object(b"").unwrap().len(), 0);
+        assert_eq!(parse_object(b"  \n ").unwrap().len(), 0);
     }
 
     #[test]

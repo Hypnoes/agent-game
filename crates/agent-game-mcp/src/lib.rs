@@ -1,7 +1,12 @@
 //! agent-game 的 MCP over Streamable HTTP 适配层。
 //!
-//! 这一层没有游戏逻辑：它把 [`agent_game_server_core`] 的注册表与动作路由
-//! 翻译成 MCP 协议原语，并把"一次工具调用"接上框架的等待语义。
+//! 本 crate 实现的是 MCP **服务端**（`rmcp::ServerHandler`），不是客户端。
+//! Agent 侧的 MCP 客户端是外部组件（DSH 内置的 `@deepseek-ai/dsh-mcp-client`），
+//! 本项目不提供、也不需要任何本地可执行产物。方向是：Agent 发起请求 → 本 crate
+//! 处理 → 内核（[`agent_game_server_core`]）执行。
+//!
+//! 这一层没有游戏逻辑：它把内核的注册表与动作路由翻译成 MCP 协议原语，
+//! 并把"一次工具调用"接上框架的等待语义。
 //!
 //! 身份约束（与 Python 版同一条）：对局归属由 `player_token` 决定，
 //! `Mcp-Session-Id` 只是连接级缓存键。同一个 token 无论从哪条 MCP 连接进来，

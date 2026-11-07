@@ -26,12 +26,13 @@ use std::time::{Duration, Instant};
 use rand::RngExt as _;
 use serde_json::Value;
 
-use crate::config::Config;
-use crate::engine::{ActionParams, CreateParams, GameEngine, PlayerMode, PlayerView, TimeoutEvent};
-use crate::error::EngineError;
-use crate::identity::check_player_identity;
-use crate::prompt::{Ctx, PromptStore};
-use crate::signal::ChangeSignal;
+use agent_game_server_domain::game::{GameEngine, PlayerMode, PlayerView, TimeoutEvent};
+use agent_game_server_infra::config::Config;
+use agent_game_server_infra::error::EngineError;
+use agent_game_server_infra::identity::check_player_identity;
+use agent_game_server_infra::params::{ActionParams, CreateParams};
+use agent_game_server_infra::prompt::{Ctx, PromptStore};
+use agent_game_server_infra::signal::ChangeSignal;
 
 const PROMPT_TOML: &str = include_str!("../../assets/liars_dice_prompts.toml");
 
@@ -63,7 +64,7 @@ impl Player {
     }
 }
 
-impl crate::identity::PlayerIdentity for Player {
+impl agent_game_server_infra::identity::PlayerIdentity for Player {
     fn token(&self) -> &str {
         &self.token
     }
@@ -312,7 +313,7 @@ impl LiarsDiceEngine {
 
     /// 校验身份：索引合法 + token 匹配。
     ///
-    /// 校验本身在 [`crate::identity::check_player_identity`]——REST 与 MCP 两条
+    /// 校验本身在 [`agent_game_server_infra::identity::check_player_identity`]——REST 与 MCP 两条
     /// 传输共用同一份判断。这里只负责把"通过"翻译成可用的索引。
     fn validate_player(
         &self,
@@ -922,10 +923,10 @@ impl GameEngine for LiarsDiceEngine {
         self.setup.clone()
     }
 
-    fn describe_tools(&self) -> Vec<crate::engine::ToolSpec> {
+    fn describe_tools(&self) -> Vec<agent_game_server_domain::game::ToolSpec> {
         use serde_json::json;
 
-        use crate::engine::ToolSpec;
+        use agent_game_server_domain::game::ToolSpec;
 
         let seat = json!({"type": "integer", "description": "你的玩家编号"});
         let token = json!({"type": "string", "description": "你的身份 token（必填）"});
@@ -1543,7 +1544,7 @@ mod tests {
             let view = engine.player_view(Some(index)).unwrap();
             assert!(!view.prompt.contains("{missing:"), "{}", view.prompt);
             assert!(!view.prompt.contains("[unrendered]"), "{}", view.prompt);
-            assert!(!view.prompt.is_empty());
+            assert_ne!(view.prompt, "", "提示词不该为空");
         }
     }
 

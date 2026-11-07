@@ -12,6 +12,7 @@
 | [002](./002-mcp-http-transport.md) | [#2](https://github.com/Hypnoes/agent-game/issues/2) | 迁移到 MCP over HTTP 并移除本地客户端 | 001 | 已合并 |
 | [003](./003-full-remediation.md) | — | 全量修复：正确性、健壮性、测试框架与工具链 | 001、002 | 已实施 |
 | [004](./004-riir.md) | — | RIIR：用 Rust 重写整个服务端 | 001–003 | 已实施 |
+| [005](./005-core-layering.md) | [#5](https://github.com/Hypnoes/agent-game/issues/5) | core 分层重排，每层抽成独立 crate | 004 | 实施中 |
 
 001 可以在现有 REST 通道上独立验证等待行为；002 把同一行为搬到 MCP 传输层，并删除本地客户端包。两者的分支与 PR 采用堆叠方式：002 基于 001 的分支开发，PR 先指向 001 分支，待 001 合并后再把 base 改为 `master`。两个 Issue 均已实现并合入 `master`，实施中与原规划的偏差记在各自文档末尾的「实施结果」一节。
 

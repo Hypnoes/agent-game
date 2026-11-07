@@ -218,9 +218,13 @@ mod tests {
     #[test]
     fn unregistered_games_contribute_no_tools() {
         let registry = Registry::new();
-        assert!(all_tools(&registry).is_empty());
+        assert_eq!(all_tools(&registry), Vec::new(), "空注册表不该产出工具");
         assert_eq!(tool_count(&registry, "nope"), 0);
-        assert!(all_tools_for(&registry, "nope").is_empty());
+        assert_eq!(
+            all_tools_for(&registry, "nope"),
+            Vec::new(),
+            "未注册的游戏不该有工具"
+        );
     }
 
     #[test]
@@ -241,7 +245,7 @@ mod tests {
                     as BoxedEngine,
             )
         }));
-        assert!(all_tools(&registry).is_empty());
+        assert_eq!(all_tools(&registry), Vec::new(), "空注册表不该产出工具");
         assert_eq!(tool_count(&registry, "silent"), 0);
     }
 

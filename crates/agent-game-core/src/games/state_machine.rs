@@ -5,7 +5,7 @@
 //! + 四个钩子方法。这里的取值是："状态图是数据，不是类"——每个引擎在
 //! [`Transitions`] 里写一张表，`transition_to` 校验后返回新状态。
 
-use crate::error::EngineError;
+use agent_game_server_infra::error::EngineError;
 
 /// 一张状态转移表。
 #[derive(Debug, Clone)]

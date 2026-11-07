@@ -1,0 +1,25 @@
+[package]
+name = "agent-game-server-infra"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "agent-game 的基础设施层：预算、配置、错误、信号、等待、提示词、身份、参数解析。不依赖上层"
+
+# 这一层**没有** agent-game-server-core 依赖，这是刻意的：
+# 反向依赖（infra → domain）会在 cargo 的循环依赖检查处直接编译失败，
+# 而不是靠一个可能漏检的源码扫描器。
+[dependencies]
+serde_json.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "test-util", "macros"] }
+uuid.workspace = true
+
+[lints]
+workspace = true

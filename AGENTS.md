@@ -254,6 +254,84 @@ Rust 里没有 `skip` 这个概念（`#[ignore]` 只用于"慢"，不用于"能�
 
 ---
 
+## 16. 分层边界必须由 crate 强制，不用源码扫描
+
+四个 crate，依赖只能向上：
+
+| crate | 放什么 | 不许依赖 |
+|---|---|---|
+| `agent-game-server-infra` | 预算、配置、错误、信号、等待、提示词、身份、参数解析 | `domain`、`core` |
+| `agent-game-server-domain` | 引擎协议（`GameAbstraction`）、大厅匹配（`Lobby`）、会话生命周期、注册表、测试替身 | `core` |
+| `agent-game-server-core` | 具体规则（`GameImpl`：大话骰、猜数字） | — |
+| `agent-game-server-mcp` / `-server` | 传输层 | 只依赖上面 |
+
+每条反向依赖都会让 cargo 在循环依赖检查处失败：
+
+```
+error: cyclic package dependency: package `agent-game-server-core` depends on itself
+```
+
+**这条约束曾经用源码扫描守过，四代都被绕过。** 每一代都合法可编译却漏检：
+
+| 代 | 写法 | 为什么扫描器漏 |
+|---|---|---|
+| 1 | `pub(crate) use crate::domain::X;` | 不以 `use ` 开头 |
+| 1 | `use crate::domain as dom;` | 别名，不是 `::` 后缀 |
+| 1 | `use crate::{domain::X};` | 分组导入 |
+| 2 | `pub(in crate::infra) use crate::domain::X;` | 可见性修饰更复杂 |
+| 2 | `use crate::{infra::X, domain};` | 分组里的裸模块项 |
+| 3 | `use super::super::domain::game::X;` | 相对路径，不含 `crate::` |
+| 3 | `use crate :: domain :: game :: X;` | token 间空格 |
+| 3 | `fn f(_: crate::domain::game::X) {}` | 根本不是 `use` |
+| 4 | `use crate as root; use root::games::X;` | 别名后引用，前缀完全不匹配 |
+
+第四代是决定性的：**只要还能用任意别名到达上层，任何文本前缀检查都有下一代替换。**
+字符串匹配无法穷尽一种语言的模块引用语法。
+
+**现在的结论**：`infra`、`domain`、`core` 各自独立成 crate，方向由编译器执行，
+不存在"某种写法绕过"的余地。`use crate as root` 在 `domain` crate 里只能到达
+`domain` 自己，`root::games` 根本不存在，编译期报
+`cannot find 'games' in 'root'`。
+
+**看门用例**（`crates/agent-game-core/tests/layering.rs`）：
+- `infra_does_not_depend_on_domain` / `infra_does_not_depend_on_core` /
+  `domain_does_not_depend_on_core`——断言 manifest 里没有反向依赖
+- `the_dependency_chain_is_core_to_domain_to_infra`——正向断言，防止
+  "拆开但不建立依赖"也能全绿
+- `cargo_really_rejects_a_reverse_dependency`——**真的调用 cargo**：临时往
+  `infra/Cargo.toml` 注入反向依赖，断言 cargo 报 `cyclic`，然后恢复。
+  前四条只读文本，这一条证明约束是构建系统执行的，不是我们在测试里模拟的
+
+**新增规则时的自检**：往 `crates/agent-game-infra/Cargo.toml` 的
+`[dependencies]` 加一行 `agent-game-server-domain = { path = "../agent-game-domain" }`，
+`cargo build -p agent-game-server-infra` 必须报 `cyclic package dependency`。
+
+---
+
+## 17. 目录重排不许破坏公开导入路径
+
+重排是"纯内部"的改动，但编译期只在**调用方**那里才报错。core 自己的测试会跟着
+改，所以套件全绿也可能已经把外部使用者打断——这正是本 PR 第一版真实犯的错：
+把 `manager.rs` 拆成四个文件后，`core::manager::{GameManager, Session, ...}`
+整条路径消失了，而 518 条测试全绿，因为没有任何用例从外部位置 import 它。
+
+**现在**：`lib.rs` 用 `pub mod <旧名> { pub use <新位置>::*; }` 保留全部 12 个
+历史模块路径，并显式转发通配带不到的类型（`ActionParams` / `CreateParams` 曾是
+`engine` 下的公开名字，但它们是 `infra::params` 的类型，`pub use domain::game::*`
+带不出来）。
+
+**看门用例**：`crates/agent-game-core/tests/api_paths.rs`
+- `every_public_module_path_still_resolves`——12 个模块路径逐个 import 一遍
+- `top_level_reexports_still_resolve`——顶层 `pub use` 的 22 个名字逐个点名
+
+它不测行为，测的是"路径还在"。删掉 `manager` 兼容模块后，这个文件**编译失败**，
+而不是行为断言失败。
+
+**新增规则时的自检**：删掉 `lib.rs` 里任意一个兼容模块，`cargo test -p
+agent-game-server-core --test api_paths` 必须编译失败。
+
+---
+
 ## 附：写作与编码约定
 
 | 项 | 约定 |

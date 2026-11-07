@@ -11,14 +11,14 @@ use std::time::{Duration, Instant};
 use rand::RngExt as _;
 use serde_json::Value;
 
-use crate::config::Config;
-use crate::engine::{
-    ActionParams, CreateParams, DEFAULT_FINISHED_STATES, GameEngine, PlayerMode, PlayerView,
-    TimeoutEvent,
+use agent_game_server_domain::game::{
+    DEFAULT_FINISHED_STATES, GameEngine, PlayerMode, PlayerView, TimeoutEvent,
 };
-use crate::error::EngineError;
-use crate::prompt::{Ctx, PromptStore};
-use crate::signal::ChangeSignal;
+use agent_game_server_infra::config::Config;
+use agent_game_server_infra::error::EngineError;
+use agent_game_server_infra::params::{ActionParams, CreateParams};
+use agent_game_server_infra::prompt::{Ctx, PromptStore};
+use agent_game_server_infra::signal::ChangeSignal;
 
 const PROMPT_TOML: &str = include_str!("../../assets/guess_number_prompts.toml");
 
@@ -456,10 +456,10 @@ impl GameEngine for GuessNumberEngine {
         self.setup.clone()
     }
 
-    fn describe_tools(&self) -> Vec<crate::engine::ToolSpec> {
+    fn describe_tools(&self) -> Vec<agent_game_server_domain::game::ToolSpec> {
         use serde_json::json;
 
-        use crate::engine::ToolSpec;
+        use agent_game_server_domain::game::ToolSpec;
 
         vec![
             ToolSpec::new(
@@ -529,7 +529,7 @@ mod tests {
         assert_eq!(engine.max_attempts(), 10);
         assert!(engine.target() >= 1 && engine.target() <= 100);
         assert_eq!(engine.guess_count(), 0);
-        assert!(engine.guesses().is_empty());
+        assert!(engine.guesses().is_empty(), "开局前不该有猜数记录");
     }
 
     #[test]
@@ -616,7 +616,7 @@ mod tests {
             .unwrap();
         assert_eq!(engine.phase(), "in_progress");
         assert_eq!(engine.guess_count(), 0);
-        assert!(engine.guesses().is_empty());
+        assert!(engine.guesses().is_empty(), "开局前不该有猜数记录");
         assert_ne!(engine.target(), old_target, "重开一局必须换答案");
     }
 
