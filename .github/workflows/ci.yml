@@ -8,6 +8,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  # 仓库根 `.cargo/config.toml` 把 `rustc-wrapper` 设成了 `sccache`（本地加速用）。
+  # CI runner 没装 sccache，于是每一条 cargo 命令都报
+  #   could not execute process `sccache ...` (No such file or directory)
+  # 整个 CI 从来没跑过真实检查。这里用 CARGO_BUILD_RUSTC_WRAPPER 覆盖掉它：
+  # 清空即"不用 wrapper"，比在 CI 里额外装一个 sccache 更轻，也避免缓存打架。
+  CARGO_BUILD_RUSTC_WRAPPER: ""
 
 jobs:
   check:
