@@ -268,7 +268,7 @@ mod tests {
     #[test]
     fn the_default_registry_is_empty() {
         let registry = Registry::new();
-        assert!(registry.is_empty());
+        assert_eq!(registry.len(), 0);
         assert_eq!(registry.display_names().len(), 0);
     }
 

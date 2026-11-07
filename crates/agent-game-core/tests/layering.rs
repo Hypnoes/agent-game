@@ -115,42 +115,62 @@ fn the_dependency_chain_is_core_to_domain_to_infra() {
     );
 }
 
-/// 端到端验证：真的让 infra 反向依赖 core，cargo 必须报循环依赖。
+/// 端到端验证：cargo 确实拒绝循环依赖。
 ///
-/// 前三条断言只读 manifest 文本。这一条**实际调用 cargo**，证明约束不是
-/// 我们自己在测试里模拟的，而是构建系统真的拒绝。
+/// 前几条断言只读 manifest 文本。这一条**实际调用 cargo**，证明约束不是我们
+/// 在测试里模拟的，而是构建系统真的拒绝。
 ///
-/// 用临时的 `--config` 注入依赖，不改仓库文件；跑完即恢复。
+/// # 为什么在临时 workspace 里做，而不是改真实 manifest
+///
+/// 第一版是直接往 `crates/agent-game-infra/Cargo.toml` 注入反向依赖、跑完再
+/// 恢复。它在本地全绿，CI 上却红——nextest 默认每个测试跑在**独立进程**里，
+/// 进程内的锁串行不了，于是 `infra_does_not_depend_on_core` 正好读到了被注入
+/// 的中间状态。这是测试自身的竞态，不是产品缺陷。
+///
+/// 现在改为在临时目录搭一个最小 workspace（两个小 crate 互相依赖），
+/// 完全不碰仓库文件。它验证的是"cargo 会拒绝循环依赖"这个机制本身——
+/// 那正是我们依赖的东西。
 #[test]
-fn cargo_really_rejects_a_reverse_dependency() {
-    let crate_dir = workspace_root().join("crates/agent-game-infra");
-    let original = fs::read_to_string(crate_dir.join("Cargo.toml")).unwrap();
+fn cargo_really_rejects_a_cyclic_dependency() {
+    let root = std::env::temp_dir().join(format!("layering-cycle-probe-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("a/src")).unwrap();
+    fs::create_dir_all(root.join("b/src")).unwrap();
 
-    // 用 `[dependencies]` 追加一条反向依赖。cargo 在解析依赖图阶段就会失败，
-    // 不需要真的编译，所以这一步很快。
-    let mutated = original.replace(
-        "[dependencies]",
-        "[dependencies]\nagent-game-server-core = { path = \"../agent-game-core\" }",
-    );
-    assert_ne!(mutated, original, "注入点没找到，测试本身失效");
-    fs::write(crate_dir.join("Cargo.toml"), &mutated).unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"a\", \"b\"]\nresolver = \"3\"\n",
+    )
+    .unwrap();
+    // a 依赖 b
+    fs::write(
+        root.join("a/Cargo.toml"),
+        "[package]\nname = \"probe-a\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
+         [dependencies]\nprobe-b = { path = \"../b\" }\n",
+    )
+    .unwrap();
+    // b 反过来依赖 a —— 这就是循环
+    fs::write(
+        root.join("b/Cargo.toml"),
+        "[package]\nname = \"probe-b\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
+         [dependencies]\nprobe-a = { path = \"../a\" }\n",
+    )
+    .unwrap();
+    fs::write(root.join("a/src/lib.rs"), "pub fn a() {}\n").unwrap();
+    fs::write(root.join("b/src/lib.rs"), "pub fn b() {}\n").unwrap();
 
     let output = Command::new(env!("CARGO"))
-        // `metadata` 不带 `--no-deps` 会真正解析依赖图；这一步就足够触发
-        // 循环依赖检查，不需要编译。
         .args(["metadata", "--format-version", "1"])
-        .current_dir(workspace_root())
-        .output();
+        .current_dir(&root)
+        .output()
+        .expect("跑 cargo metadata 失败");
 
-    // 无论结果如何，先恢复——这是唯一必须保证的事。
-    fs::write(crate_dir.join("Cargo.toml"), &original).unwrap();
+    let _ = fs::remove_dir_all(&root);
 
-    let output = output.expect("跑 cargo metadata 失败");
     let stderr = String::from_utf8_lossy(&output.stderr);
-
     assert!(
         !output.status.success(),
-        "cargo 竟然接受了 infra → core 的反向依赖，分层强制失效。\nstderr:\n{stderr}"
+        "cargo 竟然接受了循环依赖，分层强制的基础不成立。\nstderr:\n{stderr}"
     );
     assert!(
         stderr.contains("cyclic") || stderr.contains("cycle"),

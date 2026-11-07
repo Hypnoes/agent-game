@@ -1544,7 +1544,7 @@ mod tests {
             let view = engine.player_view(Some(index)).unwrap();
             assert!(!view.prompt.contains("{missing:"), "{}", view.prompt);
             assert!(!view.prompt.contains("[unrendered]"), "{}", view.prompt);
-            assert!(!view.prompt.is_empty());
+            assert_ne!(view.prompt, "", "提示词不该为空");
         }
     }
 

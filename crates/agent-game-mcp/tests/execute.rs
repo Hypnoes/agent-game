@@ -270,8 +270,8 @@ fn all_tools_for_knows_every_registered_game() {
     // 工具表由引擎自己声明（`GameEngine::describe_tools`），mcp 层只做翻译。
     // 任一引擎漏声明会让它的工具从这里消失。
     let registry = registry();
-    assert!(!tools::all_tools_for(&registry, "guess_number").is_empty());
-    assert!(!tools::all_tools_for(&registry, "two_player").is_empty());
+    assert_ne!(tools::all_tools_for(&registry, "guess_number"), Vec::new());
+    assert_ne!(tools::all_tools_for(&registry, "two_player"), Vec::new());
     assert!(
         tools::all_tools_for(&registry, "nope").is_empty(),
         "未知游戏返回空"
@@ -491,7 +491,7 @@ async fn a_single_player_session_needs_no_token() {
     )
     .await
     .unwrap();
-    assert!(!text.is_empty());
+    assert!(!text.is_empty(), "返回值不能为空");
 }
 
 // ═══════════════════════════════════════════

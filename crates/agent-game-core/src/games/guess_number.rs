@@ -529,7 +529,7 @@ mod tests {
         assert_eq!(engine.max_attempts(), 10);
         assert!(engine.target() >= 1 && engine.target() <= 100);
         assert_eq!(engine.guess_count(), 0);
-        assert!(engine.guesses().is_empty());
+        assert!(engine.guesses().is_empty(), "开局前不该有猜数记录");
     }
 
     #[test]
@@ -616,7 +616,7 @@ mod tests {
             .unwrap();
         assert_eq!(engine.phase(), "in_progress");
         assert_eq!(engine.guess_count(), 0);
-        assert!(engine.guesses().is_empty());
+        assert!(engine.guesses().is_empty(), "开局前不该有猜数记录");
         assert_ne!(engine.target(), old_target, "重开一局必须换答案");
     }
 

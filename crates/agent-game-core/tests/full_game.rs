@@ -364,7 +364,7 @@ fn join_then_play_produces_a_stable_call_history() {
             assert!(call.quantity >= 1);
         } else {
             assert_eq!(call.quantity, 0);
-            assert!(!call.message.is_empty());
+            assert_ne!(call.message, "", "叫数消息不该为空");
         }
     }
     let _ = json!({});

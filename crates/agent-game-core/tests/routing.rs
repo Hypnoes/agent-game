@@ -509,5 +509,5 @@ async fn act_succeeds_on_a_known_action() {
         .act(&session, "state", ActionParams::default())
         .await
         .unwrap();
-    assert!(!view.prompt.is_empty());
+    assert_ne!(view.prompt, "", "提示词不该为空");
 }

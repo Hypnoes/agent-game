@@ -687,7 +687,7 @@ mod tests {
                 .unwrap();
         }
         let events = manager.check_timeouts(Instant::now()).await;
-        assert!(events.is_empty());
+        assert!(events.is_empty(), "不该有超时事件");
         assert_eq!(manager.len(), 1, "刚结束的对局还在保留期内");
     }
 

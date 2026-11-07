@@ -192,7 +192,7 @@ fn parse_first_message(text: &str) -> Option<Value> {
 async fn initialize_returns_a_session_id_without_redirecting() {
     let server = Server::start().await;
     let session = server.handshake().await;
-    assert!(!session.is_empty());
+    assert_ne!(session, String::new());
 }
 
 #[tokio::test]
