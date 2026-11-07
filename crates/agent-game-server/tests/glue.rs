@@ -122,7 +122,10 @@ async fn an_unknown_game_type_filter_yields_nothing() {
     let (status, body) = get(app, "/api/v1/games/tools?game_type=nope").await;
     assert_eq!(status, StatusCode::OK);
     let games: Value = serde_json::from_str(&body).unwrap();
-    assert!(games["games"].as_array().unwrap().is_empty());
+    assert_eq!(
+        games["games"].as_array().unwrap(),
+        &Vec::<serde_json::Value>::new()
+    );
 }
 
 // ═══════════════════════════════════════════

@@ -16,8 +16,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::config::Config;
-use crate::engine::{BoxedEngine, CreateParams, PlayerMode};
+use crate::game::{BoxedEngine, PlayerMode};
+use agent_game_server_infra::config::Config;
+use agent_game_server_infra::params::CreateParams;
 
 /// 一个已经注册的游戏。
 #[derive(Clone)]
@@ -267,7 +268,7 @@ mod tests {
     #[test]
     fn the_default_registry_is_empty() {
         let registry = Registry::new();
-        assert!(registry.is_empty());
+        assert_eq!(registry.len(), 0);
         assert_eq!(registry.display_names().len(), 0);
     }
 

@@ -54,7 +54,7 @@ async fn session_count_reflects_a_real_session() {
 fn the_version_comes_from_cargo_not_a_literal() {
     let state = AppState::with_defaults("tok".to_owned());
     assert_eq!(state.version(), env!("CARGO_PKG_VERSION"));
-    assert!(!state.version().is_empty());
+    assert_ne!(state.version(), "", "版本号不该为空");
 }
 
 // ═══════════════════════════════════════════

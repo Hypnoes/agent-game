@@ -13,6 +13,8 @@ description = "agent-game 的纯逻辑内核：规则、预算、身份、等待
 testing = []
 
 [dependencies]
+agent-game-server-infra.workspace = true
+agent-game-server-domain.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
 serde.workspace = true

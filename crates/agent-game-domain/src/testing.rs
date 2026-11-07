@@ -10,10 +10,11 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-use crate::engine::{ActionParams, CreateParams, GameEngine, PlayerMode, PlayerView, TimeoutEvent};
-use crate::error::EngineError;
-use crate::prompt::PromptStore;
-use crate::signal::ChangeSignal;
+use crate::game::{GameEngine, PlayerMode, PlayerView, TimeoutEvent};
+use agent_game_server_infra::error::EngineError;
+use agent_game_server_infra::params::{ActionParams, CreateParams};
+use agent_game_server_infra::prompt::PromptStore;
+use agent_game_server_infra::signal::ChangeSignal;
 
 fn shared_prompts() -> &'static PromptStore {
     static PROMPTS: OnceLock<PromptStore> = OnceLock::new();

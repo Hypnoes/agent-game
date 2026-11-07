@@ -198,7 +198,7 @@ fn the_registry_iterates_over_every_registered_game() {
 #[test]
 fn an_empty_registry_reports_itself_as_empty_and_a_filled_one_does_not() {
     let mut registry = Registry::new();
-    assert!(registry.is_empty());
+    assert_eq!(registry.len(), 0);
     assert_eq!(registry.len(), 0);
 
     registry.register(GameMeta::new("alpha", PlayerMode::Single, |_p, _c| {
