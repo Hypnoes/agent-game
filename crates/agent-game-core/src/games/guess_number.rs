@@ -83,14 +83,13 @@ pub struct GuessNumberEngine {
     ended_at_ms: Option<u128>,
     signal: Arc<ChangeSignal>,
     prompts: &'static PromptStore,
-    /// 最近一次 `reset()` 传给 `roll_target` 的 previous。
+    /// `roll_target` **实际收到**的 previous（每次调用都刷新）。
     ///
-    /// 只给测试用：这条"阶段 → previous"的接线是 `reset()` 里唯一有分支的地方，
-    /// 而它的效果（target 换不换）在随机源下不可确定观察——进行中重置时
-    /// `roll_target(None)` 允许抽到同一个数。把输入记下来，测试才能确定性断言
-    /// 分支走对了，不必依赖"反复重置看 target 变不变"这种概率判断。
-    #[doc(hidden)]
-    pub last_reset_previous: Option<i64>,
+    /// 只给测试用。记录点放在 `roll_target` 里而不是 `reset` 里，是为了让
+    /// "记录"与"消费"是同一个值——否则 `reset` 记了 `None`、却把
+    /// `Some(target)` 传给 `roll_target`，测试仍会看到 `None` 而放过这个缺陷
+    /// （review 指出过这个组合缺口，实测确认存在）。
+    last_roll_previous: Option<i64>,
 }
 
 impl GuessNumberEngine {
@@ -130,7 +129,7 @@ impl GuessNumberEngine {
             ended_at_ms: None,
             signal: Arc::new(ChangeSignal::new()),
             prompts: shared_prompts(),
-            last_reset_previous: None,
+            last_roll_previous: None,
         };
         engine.roll_target(None);
         Ok(engine)
@@ -153,6 +152,20 @@ impl GuessNumberEngine {
     #[must_use]
     pub fn last_action(&self) -> Instant {
         self.last_action
+    }
+
+    /// `roll_target` 最近一次实际收到的 previous。
+    ///
+    /// 只给测试用：这条"阶段 → previous"的接线是重置流程里唯一有分支的地方，
+    /// 而它的效果（target 换不换）在随机源下不可确定观察——进行中重置时
+    /// `roll_target(None)` 允许抽到同一个数。把**实际入参**记下来，测试才能
+    /// 确定性地断言接线走对了，不依赖"反复重置看 target 变不变"这种概率判断。
+    ///
+    /// 只读：改成 `pub` 字段会让调用方能改它，测试就失去意义。
+    #[doc(hidden)]
+    #[must_use]
+    pub fn last_roll_previous(&self) -> Option<i64> {
+        self.last_roll_previous
     }
 
     #[must_use]
@@ -187,6 +200,7 @@ impl GuessNumberEngine {
 
     /// 摇一个新答案。范围里还有别的数时保证换一个（不重复上一局）。
     fn roll_target(&mut self, previous: Option<i64>) {
+        self.last_roll_previous = previous;
         let mut rng = rand::rng();
         match previous {
             None if self.max <= self.min => self.target = rng.random_range(self.min..=self.max),
@@ -207,7 +221,6 @@ impl GuessNumberEngine {
     /// 重置成一局全新的游戏。配置（min/max/max_attempts）不变。
     fn reset(&mut self) {
         let previous = Self::carry_over_target(self.phase, self.target);
-        self.last_reset_previous = previous;
         self.phase = "in_progress";
         self.roll_target(previous);
         self.guesses.clear();
@@ -675,7 +688,7 @@ mod tests {
     /// `start_resets_a_finished_game_with_a_new_target` 只验"换答案"，
     /// 没有人验证**进行中重置不保证换答案**。
     ///
-    /// **为什么读 `last_reset_previous` 而不是看 target 变没变**：
+    /// **为什么读 `last_roll_previous()` 而不是看 target 变没变**：
     /// 进行中重置时 `roll_target(None)` 允许抽到同一个数，所以"target 没变"
     /// 只是概率事件。第一版写"反复重置 32 次看有没有不变"，有 2^-32 的 flake
     /// 概率（被 review 指出）。记录输入之后，断言变成完全确定性的。
@@ -688,7 +701,8 @@ mod tests {
             .handle_action("start", ActionParams::default())
             .unwrap();
         assert_eq!(
-            engine.last_reset_previous, None,
+            engine.last_roll_previous(),
+            None,
             "进行中重置不该带上一局答案"
         );
 
@@ -701,7 +715,7 @@ mod tests {
             .handle_action("start", ActionParams::default())
             .unwrap();
         assert_eq!(
-            engine.last_reset_previous,
+            engine.last_roll_previous(),
             Some(target),
             "已结束重置要带上答案，好让 roll_target 避开它"
         );
