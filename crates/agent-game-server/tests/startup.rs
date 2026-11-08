@@ -239,12 +239,28 @@ fn with_shared_prompt_store<R>(f: impl FnOnce(&PromptStore) -> R) -> R {
     )
     .unwrap();
 
-    let result = f(liars.prompts());
+    // 用 RAII guard 而不是"闭包跑完再复位"：闭包 panic 时那行复位不会执行，
+    // 残留的临时目录会让**后续用例**次生失败，把一次断言失败变成一片红。
+    let _cleanup = PromptStoreReset {
+        stores: vec![liars.prompts(), guess.prompts()],
+    };
 
-    // 两份都复位，别把状态漏给下一个用例
-    liars.prompts().set_dir(None);
-    guess.prompts().set_dir(None);
-    result
+    f(liars.prompts())
+}
+
+/// 离开作用域时把每个 `PromptStore` 的 `dir` 复位。
+///
+/// 基于 `Drop`，所以闭包 panic 展开时同样会执行。
+struct PromptStoreReset<'a> {
+    stores: Vec<&'a PromptStore>,
+}
+
+impl Drop for PromptStoreReset<'_> {
+    fn drop(&mut self) {
+        for store in &self.stores {
+            store.set_dir(None);
+        }
+    }
 }
 
 // ═══════════════════════════════════════════
