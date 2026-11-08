@@ -197,11 +197,7 @@ impl GuessNumberEngine {
 
     /// 重置成一局全新的游戏。配置（min/max/max_attempts）不变。
     fn reset(&mut self) {
-        let previous = if self.phase == "in_progress" {
-            None
-        } else {
-            Some(self.target)
-        };
+        let previous = Self::carry_over_target(self.phase, self.target);
         self.phase = "in_progress";
         self.roll_target(previous);
         self.guesses.clear();
@@ -211,6 +207,22 @@ impl GuessNumberEngine {
         self.started_at = Instant::now();
         self.last_action = self.started_at;
         self.signal.notify();
+    }
+
+    /// 重置时要不要把上一局的 target 带过去"避开"。
+    ///
+    /// - 进行中重置：`None` —— 不强制换答案（玩家可能只是想清空猜数记录）
+    /// - 已结束重置：`Some(上一局答案)` —— 保证换一个，别让新的一局沿用旧答案
+    ///
+    /// 抽成关联函数是为了让这个**分支决策**可以被确定性测试。之前它内联在
+    /// `reset()` 里，测试只能靠"反复重置看 target 变不变"来间接推断，那依赖
+    /// 概率。现在可以直接断言返回值。
+    fn carry_over_target(phase: &str, target: i64) -> Option<i64> {
+        if phase == "in_progress" {
+            None
+        } else {
+            Some(target)
+        }
     }
 
     fn end(&mut self, phase: &'static str) {
@@ -643,44 +655,58 @@ mod tests {
         assert_eq!(engine.phase(), "in_progress");
     }
 
-    /// 进行中重置时，`reset()` 传的是 `None`（不强制换答案）；已结束重置时传
-    /// `Some(old)`（保证换一个）。
+    /// 进行中重置时，`reset()` 传给 `roll_target` 的是 `None`（不强制换答案）；
+    /// 已结束重置时是 `Some(old)`（保证换一个）。
     ///
-    /// 这条守的是 `reset` 里 `if self.phase == "in_progress"` 那个比较符——
-    /// 改成 `!=` 会交换两个分支的语义。变异测试把 `==` 改成 `!=` 时既有用例全部
-    /// 存活：`start_resets_an_in_progress_game` 只验了计数清零，
+    /// 这条守的是 `reset` 里的分支判断。变异测试把它反过来时既有用例全部存活：
+    /// `start_resets_an_in_progress_game` 只验了计数清零，
     /// `start_resets_a_finished_game_with_a_new_target` 只验了"换答案"，
     /// 没有人验证**进行中重置不保证换答案**。
     ///
-    /// 验证方式：用 2 个候选（`min=1, max=2`）的引擎，反复「进行中 → start」。
-    /// 如果 `reset()` 误传了 `Some(old)`，`roll_target` 会**强制**换值，于是
-    /// target 每次都翻面；正确实现下 `None` 分支走随机，允许连续相同。
-    ///
-    /// 这个判断不需要概率假设：跑 32 次，正确实现下 target 保持不变的次数
-    /// 不会恰好是 0（概率 (1/2)^32，可以忽略），而错误实现下必然是 0。
+    /// 用确定性断言，不靠概率：直接测 `carry_over_target` 的返回值。
+    /// 第一版是"反复重置 32 次看 target 会不会变"，那有 2^-32 的 flake 概率，
+    /// 被 review 指出后改成现在这种。
     #[test]
-    fn resetting_an_in_progress_game_does_not_force_a_new_target() {
+    fn resetting_an_in_progress_game_does_not_carry_the_old_target() {
+        assert_eq!(
+            GuessNumberEngine::carry_over_target("in_progress", 42),
+            None,
+            "进行中重置不该带上一局答案"
+        );
+        assert_eq!(
+            GuessNumberEngine::carry_over_target("won", 42),
+            Some(42),
+            "已结束重置要带上答案，好让 roll_target 避开它"
+        );
+        assert_eq!(
+            GuessNumberEngine::carry_over_target("lost", 42),
+            Some(42),
+            "输掉之后重开同样要换答案"
+        );
+    }
+
+    /// 端到端确认上面的分支确实接进了 `reset()`。
+    ///
+    /// 只测纯函数不够——`reset()` 可能没用它。这条用"已结束 → 重开"验证
+    /// target 确实换了（`Some(old)` 路径生效），反方向（进行中不换）由
+    /// `start_resets_an_in_progress_game` 与上面的纯函数测试共同保证。
+    #[test]
+    fn resetting_after_a_finish_actually_rotates_the_target() {
         let mut engine = engine_with(serde_json::json!({ "min_num": 1, "max_num": 2 })).unwrap();
         engine
             .handle_action("start", ActionParams::default())
             .unwrap();
 
-        let mut unchanged = 0;
-        for _ in 0..32 {
-            let before = engine.target();
-            engine
-                .handle_action("start", ActionParams::default())
-                .unwrap();
-            if engine.target() == before {
-                unchanged += 1;
-            }
-        }
+        // 赢下这一局
+        let target = engine.target();
+        let _ = guess(&mut engine, Value::from(target));
+        assert_eq!(engine.phase(), "won");
 
-        assert!(
-            unchanged > 0,
-            "进行中重置不该强制换答案。32 次里 target 每次都变了，说明 \
-             reset() 把 `phase == \"in_progress\"` 的分支判断反了"
-        );
+        // 重开必须换答案：2 个候选，一定换成另一个
+        engine
+            .handle_action("start", ActionParams::default())
+            .unwrap();
+        assert_ne!(engine.target(), target, "已结束后重开必须换答案");
     }
 
     #[test]
