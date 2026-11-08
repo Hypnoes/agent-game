@@ -1,4 +1,4 @@
-# LiarsDice 建模收紧：消除双真相、哨兵值与裸索引
+# LiarsDice 建模收紧：封住双真相的越权写入口、拆开哨兵值、收裸索引
 
 | 项 | 值 |
 |---|---|
@@ -73,7 +73,13 @@ self.call_history.iter().filter(|call| call.is_bid())
 
 ## 目标
 
-让不变量由类型表达，而不是由纪律维持。
+**降低**错误状态的产生面，而不是彻底消灭它。
+
+方案 C 的实际效果要说准：`alive` 与 `dice` 这两个字段**仍然存在**。我们做的是
+把它们私有化、把写入口收进方法，让外部改不动。不变量由"纪律"变成"访问控制"。
+
+真正的单真相建模（`dice: Option<Vec<i64>>`，`None` = 未发骰）能彻底消灭双字段，
+但每个读 `dice` 的地方都要处理 `None`，属于独立一轮重构 —— 见下方"不在本次范围"。
 
 ## 设计
 
@@ -186,6 +192,14 @@ pub enum HistoryEvent {
   阶段的语义要保住**：还没发骰的玩家现在输出 `alive: true`，改完之后必须仍是
   `true`（他是"在等开局"，不是"被淘汰"）。这条如果弄错，Agent 会在 `join` 的
   返回值里看到自己已经出局，行为会完全跑偏
+- **`players` / `alive` 原本是 `pub` 字段，收紧可见性也是源兼容性变更**。
+  写清迁移方式：
+  - 读 `players` → `engine.players()`（新增只读访问器，返回 `&[Player]`）
+  - 读 `alive` → `player.is_alive()`
+  - 写 `dice` / 改存活状态 → 现有的 `set_dice()` 或新增的测试专用构造器
+  - 6.1 那种 `engine.players[1].alive = false` 的写法改为新的构造器
+- **版本策略同 006**：`pub` 字段变私有 + 方法删除属于破坏性变更，在当前
+  0.x 阶段允许，提交信息写 `BREAKING:`
 - **不引入 `PlayerId` 新类型**（见设计 d）
 - 1515 行的文件会动到主体，建议拆两个 commit：先 `alive` 派生 + `players`
   私有化（行为等价改写），再 `HistoryEvent` 枚举化（有结构变化）。第一个
@@ -193,6 +207,9 @@ pub enum HistoryEvent {
 
 ## 不在本次范围
 
+- **`dice: Option<Vec<i64>>` 的单真相建模**。它是更准确的模型，但会扩散到所有读
+  `dice` 的位置（`count_face` / `build_prompt` / `build_public_view` /
+  `set_dice` / `start_game` / `eliminate`），改动面远超本 issue 的边界
 - `phase` 枚举化（009）
 - 提示词渲染逻辑（`build_prompt` 里那 5 处 `map_or("?")` 属于本 issue 的 d 项，
   但提示词文案本身不动）

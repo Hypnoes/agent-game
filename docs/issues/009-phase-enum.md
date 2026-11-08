@@ -139,6 +139,27 @@ impl LiarsDiceEngine {
 `phase` 字段私有化，**所有**赋值走 `transition_to`。这样"非法转移"变成
 运行时可检出、且走 `EngineError` 的正常错误路径，不是 panic。
 
+### 每个引擎要写清的合法转移
+
+迁移时不能漏掉现有赋值点对应的语义。实测当前 5 处赋值：
+
+| 位置 | 场景 | 目标状态 |
+|---|---|---|
+| `guess_number.rs:193` | `reset()` 重新开始 | `InProgress` |
+| `guess_number.rs:205` | `end()` 的通用出口 | `Won` / `Lost`（由参数决定） |
+| `guess_number.rs:439` | 超时判负 | `Lost` |
+| `liars_dice.rs:398` | `start_game()` 满员开局 | `Bidding` |
+| `liars_dice.rs:545` | `finish_if_over()` 只剩一人 | `Finished` |
+
+注意 `guess_number::reset()` 允许**从任意阶段**重新开始——这是它和
+`liars_dice` 的区别（后者开局后不允许追加玩家）。所以 `transition_to` 的合法集
+每个引擎不同：
+
+- `LiarsDice`：`Waiting → Bidding`、`Bidding → Finished`
+- `GuessNumber`：`InProgress → Won`、`InProgress → Lost`、**任意 → InProgress**（重置）
+
+`reset()` 这条要单独确认：如果 `Won → InProgress` 被判为非法，重置功能会坏。
+
 注意：这确实把 006 删掉的 `state_machine.rs` 以另一种形式请了回来。区别是这次
 在**每个引擎自己的 impl 里**用 `match` 写死 3 个变体的合法转移，不是通用的
 `Vec<(&str, Vec<&str>)>` 数据结构 + 字符串比较。
@@ -161,8 +182,15 @@ impl LiarsDiceEngine {
 - `grep 'phase() == "waiting"' crates/` 为空
 - `grep '"waiting"\|"bidding"\|"finished"' crates/agent-game-domain/src/lobby.rs` 为空
 - insta 快照锁定 6 个 phase 值不变
-- `grep 'self.phase =' crates/agent-game-core/src/games/` 只剩 `transition_to` 内部那一处
+- `grep -n 'self.phase =' crates/agent-game-core/src/games/*.rs` 的每一处都在某个
+  `transition_to` 内部。**实测当前有 5 处**（`guess_number.rs:193/205/439`、
+  `liars_dice.rs:398/545`），全部要改走转移方法。验收不是"剩一处"，是
+  "每一处都在转移方法里"
 - 非法转移是 `Err` 而不是 panic：`check_timeout` 路径上用一个会产生非法转移的桩验证它不会毒化对局
+- **非法转移不留部分更新**：`transition_to` 在返回 `Err` 时不能已经改动了
+  `winner` / `loser` / `last_action` / `current_call` 等旁路状态。测试要构造
+  "校验失败但旁路已被改"的场景并断言它们仍是原值——否则对局会进入一个
+  "状态没变但数据变了"的错乱态
 - 变异测试（`-p core`）仍 0 存活
 
 ## 已知边界

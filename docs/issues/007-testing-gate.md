@@ -102,10 +102,21 @@ pub mod testing {
 ```
 
 ```toml
-# crates/agent-game-server/Cargo.toml —— 从 [dependencies] 挪到 [dev-dependencies]
+# crates/agent-game-server/Cargo.toml
+[dependencies]
+# 保留普通依赖——server 的生产代码大量 import core（admin.rs / error.rs /
+# games.rs / state.rs 都用），**不能整条移走**，否则 release 直接编译失败。
+agent-game-server-core.workspace = true
+
 [dev-dependencies]
+# 再声明一次，带 testing feature。Cargo 会在测试构建时合并 feature，
+# 生产构建则不启用它。
 agent-game-server-core = { workspace = true, features = ["testing"] }
 ```
+
+**第一版写的是"从 `[dependencies]` 挪到 `[dev-dependencies]`"——那是错的。**
+`server/src` 里 `use agent_game_server_core::...` 出现在 admin.rs、error.rs、
+games.rs、state.rs 等多处，整条移走会让 `cargo build --release` 找不到 core。
 
 ### 还有一个坑：core 自己的集成测试
 

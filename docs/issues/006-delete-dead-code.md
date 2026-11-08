@@ -87,10 +87,21 @@ crates/agent-game-core/src/games/state_machine.rs:12:pub struct Transitions {
 | `Transitions` | `pub struct` + 4 个方法 | workspace 零引用；语义（状态转移表）在两个引擎里从未被使用。**但它从未在任何文档 / README / migration 里出现过**，外部使用者只能靠读源码发现 |
 | `GameEngine::setup_params()` | trait 的必实现方法 | 移除会让所有 impl 少一个方法。**workspace 内**的实现全部由我们维护，编译期会报错；**外部**实现者（如果存在）会编译失败 |
 
-**版本策略**：项目当前是 `0.4.0`（`Cargo.toml` 的 `workspace.package.version`），
-未发布到 crates.io。0.x 版本按 semver 允许破坏性变更。删除时在提交信息里
-明确写 `BREAKING:`，并在 `docs/issues/` 记录——这是这个项目当前唯一的
-变更公告渠道。
+**版本策略**：
+
+- 项目当前是 `0.4.0`（`Cargo.toml` 的 `workspace.package.version`），未发布到
+  crates.io。0.x 版本按 semver 允许破坏性变更。
+- 若在 `0.4.0` 基础上发布，**按 0.x 约定应升到 `0.5.0`**，而不是 patch。
+  提交信息里写 `BREAKING:` 是记录手段，不能替代版本号——两者都要做。
+- 在 `docs/issues/` 记录，这是这个项目当前唯一的变更公告渠道。
+
+**迁移说明**（写给可能的外部使用者）：
+
+| 删掉的符号 | 替代方式 |
+|---|---|
+| `GameEngine::setup_params()`（调用方） | 读 `Session.setup`——`GameManager` 一直用它做匹配判断，是同一份数据 |
+| `GameEngine::setup_params()`（实现者） | 删掉该方法的 impl 即可。trait 不再要求它 |
+| `Transitions` | **没有等价替代**。使用者要么移除这个依赖、要么在自己的引擎里实现状态转移。009 会给每个引擎做一层 `transition_to`，但那是引擎私有的，不打算重新导出成通用设施 |
 
 如果要更保守，可以先发一个 `0.4.x` patch 把两者标 `#[deprecated]`，等一版再删。
 **我的建议是直接删**：`Transitions` 是纯粹的死代码，给它加 deprecation 警告等于
