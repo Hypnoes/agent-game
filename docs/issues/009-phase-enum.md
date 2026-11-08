@@ -100,13 +100,48 @@ let waiting = engine.phase() == engine.waiting_phase() && !engine.is_finished();
 引擎都要写一个 `fn is_waiting(&self) -> bool`，多一行样板，且与 `finished_states()`
 的风格不一致（后者也是自报名字列表）。
 
-### c. 非法转移写不出来
+### c. 非法转移：枚举不够，要集中到返回 Result 的转移方法
 
-`self.phase = Phase::Finished` 只能从合法位置写；要禁止 `Waiting → Finished`
-这类转移，在每个枚举上加一个 `fn can_transition_to(self, next: Self) -> bool`，
-在赋值点断言。**注意**：这会把 006 删掉的 `state_machine.rs` 以更轻的形式
-请回来——但这次是**每个引擎自己的 3 个变体**，不是通用的 `Vec<(&str, Vec<&str>)>`
-数据结构。
+**第一版规划在这里说错了。** 它写的是"非法转移写不出来"，理由是枚举约束了
+取值。这是不成立的：`enum Phase { Waiting, Bidding, Finished }` **只约束取值，
+不阻止在任何位置写 `self.phase = Phase::Finished`**。从 `Waiting` 直接跳到
+`Finished` 照样能编译。
+
+而且第一版提议"在赋值点 `assert!`"。那更糟：
+
+- `assert!` 是 panic。引擎 panic 会被 `GameManager::act` 的 `catch_unwind`
+  捕获并**毒化整个对局**（`supervisor.rs`），而不是返回一个可恢复的错误
+- `check_timeout` 里的 panic 会触发 AGENTS.md 第 10 条的隔离路径——那是给
+  "引擎内部 bug" 兜底的，不该用来做常规的非法转移检查
+
+**正确做法**：把转移收进一个方法，返回 `Result<(), EngineError>`：
+
+```rust
+impl LiarsDiceEngine {
+    fn transition_to(&mut self, next: Phase) -> Result<(), EngineError> {
+        let legal = match (self.phase, next) {
+            (Phase::Waiting, Phase::Bidding) => true,
+            (Phase::Bidding, Phase::Finished) => true,
+            _ => false,
+        };
+        if legal {
+            self.phase = next;
+            Ok(())
+        } else {
+            Err(EngineError::invalid(format!(
+                "非法状态转移：{:?} → {:?}", self.phase, next
+            )))
+        }
+    }
+}
+```
+
+`phase` 字段私有化，**所有**赋值走 `transition_to`。这样"非法转移"变成
+运行时可检出、且走 `EngineError` 的正常错误路径，不是 panic。
+
+注意：这确实把 006 删掉的 `state_machine.rs` 以另一种形式请了回来。区别是这次
+在**每个引擎自己的 impl 里**用 `match` 写死 3 个变体的合法转移，不是通用的
+`Vec<(&str, Vec<&str>)>` 数据结构 + 字符串比较。
 
 ## 测试
 
@@ -114,7 +149,7 @@ let waiting = engine.phase() == engine.waiting_phase() && !engine.is_finished();
 |---|---|
 | 契约快照（insta） | 公开视图的 `phase` 仍是 `waiting`/`bidding`/`finished`/`in_progress`/`won`/`lost` |
 | 新 `a_game_with_its_own_lobby_name_still_matches` | 大厅态叫 `lobby` 的引擎能并桌——证明"零改动加游戏"成立 |
-| 新 `illegal_transition_is_rejected` | 每个引擎的非法转移 |
+| 新 `illegal_transition_returns_an_error` | 每个引擎的非法转移返回 `Err(EngineError::invalid(..))`，**不 panic**（用 `catch_unwind` 或返回类型断言） |
 | 现有 80 处 phase 断言 | 全绿（它们比的是 JSON 里的字符串，不该变） |
 
 **契约快照不能省**：`admin.html:323` 用 `state.phase ?? state.status` 归类
@@ -126,6 +161,8 @@ let waiting = engine.phase() == engine.waiting_phase() && !engine.is_finished();
 - `grep 'phase() == "waiting"' crates/` 为空
 - `grep '"waiting"\|"bidding"\|"finished"' crates/agent-game-domain/src/lobby.rs` 为空
 - insta 快照锁定 6 个 phase 值不变
+- `grep 'self.phase =' crates/agent-game-core/src/games/` 只剩 `transition_to` 内部那一处
+- 非法转移是 `Err` 而不是 panic：`check_timeout` 路径上用一个会产生非法转移的桩验证它不会毒化对局
 - 变异测试（`-p core`）仍 0 存活
 
 ## 已知边界

@@ -45,50 +45,87 @@ cargo build --release -p agent-game-server-domain
 
 ## 设计
 
-两个约束必须同时满足，这是本 issue 唯一的难点：
+### 三个约束必须同时满足
 
-1. **生产构建不编译它**（`cargo build --release` 后 rlib 里没有 `DummyEngine`）
-2. **各 crate 的集成测试仍能用它**（`crates/*/tests/*.rs` 是独立 crate，`cfg(test)`
-   对它们**不生效**）
+1. **生产构建不编译它**（`cargo build --release` 的产物里没有 `DummyEngine`）
+2. **各 crate 的集成测试仍能用它**（`crates/*/tests/*.rs` 是独立 crate，
+   `cfg(test)` 对它们**不生效**）
+3. **`cargo build --release` 整个 workspace 都干净**，不只是 `-p domain`
 
-只用 `#[cfg(test)]` 解决第 1 条会破坏第 2 条。可行方案：
+只用 `#[cfg(test)]` 解决第 1 条会破坏第 2 条。
 
-**方案 A：feature + 只让 dev-dependencies 开启**
+### 现状盘点：漏一个都不算修好
+
+第一版规划只写了 domain crate 的 `[features] testing`。**那不完整**——实测发现
+还有三处会把替身拖进生产构建：
+
+| # | 位置 | 现状 | 问题 |
+|---|---|---|---|
+| 1 | `domain/src/lib.rs:37` | `pub mod testing;` 无条件 | 直接编译进去 |
+| 2 | `core/src/lib.rs:55-57` | `pub mod testing { pub use agent_game_server_domain::testing::*; }` 无条件 | **core 又把它无条件再导出一次**。就算 domain 门控了，core 这边照样漏 |
+| 3 | `core/Cargo.toml:13` | `testing = []` 是**空** feature | 它没有转发 domain 的 `testing` feature，所以给 core 开 `features = ["testing"]` 对 domain 毫无作用 |
+| 4 | `server/Cargo.toml:16` | `agent-game-server-core = { ..., features = ["testing"] }` 在 **`[dependencies]`** 段 | 生产依赖就开了 testing。**这条是致命的**：它会通过 feature union 打开整条链 |
+
+（`mcp/Cargo.toml:25` 同样写了 `features = ["testing"]`，但它在
+`[dev-dependencies]` 段——**这个是对的**，是正确写法的样板。）
+
+### 完整方案
 
 ```toml
-# domain/Cargo.toml
+# crates/agent-game-domain/Cargo.toml
 [features]
 testing = []
 ```
 
 ```rust
-// domain/src/lib.rs
+// crates/agent-game-domain/src/lib.rs
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 ```
 
 ```toml
-# 每个要用它的 crate
+# crates/agent-game-core/Cargo.toml
+[features]
+# 转发给 domain。空 feature 转发不到任何地方，这是第一版漏掉的。
+testing = ["agent-game-server-domain/testing"]
+
 [dev-dependencies]
 agent-game-server-domain = { workspace = true, features = ["testing"] }
 ```
 
-关键：`[dev-dependencies]` 只在测试构建时生效，`cargo build --release` 拿不到
-这个 feature，模块不编译。
+```rust
+// crates/agent-game-core/src/lib.rs
+#[cfg(any(test, feature = "testing"))]
+pub mod testing {
+    pub use agent_game_server_domain::testing::*;
+}
+```
 
-**风险**：`[features]` 在同一个 workspace 里会被 union。如果**任何**一个
-`[dependencies]`（非 dev）也开了 `testing`，release 构建就会带上它。所以必须
-同时验证没有生产依赖开启它。
+```toml
+# crates/agent-game-server/Cargo.toml —— 从 [dependencies] 挪到 [dev-dependencies]
+[dev-dependencies]
+agent-game-server-core = { workspace = true, features = ["testing"] }
+```
 
-**方案 B：独立 crate `agent-game-testing`**
+### 还有一个坑：core 自己的集成测试
 
-更彻底：测试替身单独一个 crate，各 crate 的 `[dev-dependencies]` 依赖它。
-生产依赖树里根本没有这个包。
+`crates/agent-game-core/tests/api_paths.rs` 与 `layering.rs` 用到了
+`core::testing`（它们是独立 crate，`cfg(test)` 不生效）。给 core 加
+`#[dev-dependencies] agent-game-server-core = { path = ".", features = ["testing"] }`
+自引用即可——`testing.rs` 那条注释里说"三个 crate 共用"时就已经需要这个手法。
 
-代价：多一个 workspace 成员、多一份版本号与发布边界。
+### 验收不能只看单包
 
-**取舍**：先做方案 A，它不需要新增 crate。如果实测发现 feature union 把
-release 构建污染了，再升级到方案 B。
+```bash
+# 必须构建整个 workspace，而不只是 -p domain
+cargo build --release
+# 对每个 rlib 串扫描，任何一个里出现 DummyEngine 都算失败
+```
+
+**不要用 `--all-features`**：那会主动打开 `testing`，自己把替身塞进去。
+
+**方案 B（备选）**：独立 crate `agent-game-testing`。生产依赖树里根本没有这个包，
+最彻底。若方案 A 在实测中被 feature union 以某种意外方式污染，升级到 B。
 
 ## 测试
 
@@ -104,11 +141,17 @@ release 构建污染了，再升级到方案 B。
 
 ## 验收标准
 
-- `cargo build --release -p agent-game-server-domain` 后，rlib 里**不含**
-  `DummyEngine` 与 `admin-only`
+- `cargo build --release`（**整个 workspace**）后，遍历
+  `target/release/*.rlib`，任何一个里都不含 `DummyEngine` 与 `admin-only`
+  ——不是只查 `-p agent-game-server-domain`
 - `cargo test --workspace` 全绿（527 passed，不减少）
+  ——包括 core 自己的 `api_paths` / `layering` 两条集成测试，它们依赖
+  `core::testing` 的可用性
+- **反证**：`cargo build --release --all-features` 会把替身塞回去。
+  验收脚本不能带这个参数，且要在文档里写明原因
 - CI 新增一条"产物里无测试替身"的检查
 - AGENTS.md 第 16 条表格里"测试替身"那一行更新为正确的 crate 与门控方式
+  （现在是 `domain::testing::DummyEngine`）
 
 ## 已知边界
 

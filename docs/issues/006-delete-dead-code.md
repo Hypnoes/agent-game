@@ -20,10 +20,16 @@
 **整个 workspace 里除了它自己的 3 条单元测试，没有任何引用。** 实测：
 
 ```
-grep -rn "Transitions|state_machine" crates/
-  games/mod.rs:5              (pub mod 声明)
-  games/state_machine.rs      自己
+$ grep -rnE "Transitions|state_machine" crates/
+crates/agent-game-core/src/games/mod.rs:5:pub mod state_machine;
+crates/agent-game-core/src/games/state_machine.rs:6://! [`Transitions`] 里写一张表...
+crates/agent-game-core/src/games/state_machine.rs:12:pub struct Transitions {
+...
 ```
+
+注意 `-E`：POSIX 的 `grep` 默认用 BRE，`|` 在那里是**普通字符**，
+`grep -rn "Transitions|state_machine"` 会返回空——看起来像"什么都没找到"，
+掩盖了真实结果。
 
 而两个引擎都用 `phase: &'static str` 直接赋值、用字符串字面量比较：
 
@@ -69,9 +75,26 @@ grep -rn "Transitions|state_machine" crates/
 | 删声明 | `crates/agent-game-core/src/games/mod.rs:5` |
 | 删 3 条单元测试 | 随文件一起消失 |
 
-`Transitions` 是 `pub`，技术上属于公开 API。但删除它**不是**破坏性变更：
-没有任何外部消费者（workspace 内零引用），且它表达的语义（状态转移表）在
-现有两个引擎里从未被使用。
+### 兼容性影响：必须说清楚
+
+`Transitions` 与 `setup_params()` 都是 `pub`，所以删除**是源兼容性破坏**。
+
+我能证明的只有"workspace 内零引用"。**外部消费者范围未知**——这个仓库是公开的，
+理论上可能有人依赖。所以要交代清楚而不是含糊过去：
+
+| 符号 | 性质 | 我的判断 |
+|---|---|---|
+| `Transitions` | `pub struct` + 4 个方法 | workspace 零引用；语义（状态转移表）在两个引擎里从未被使用。**但它从未在任何文档 / README / migration 里出现过**，外部使用者只能靠读源码发现 |
+| `GameEngine::setup_params()` | trait 的必实现方法 | 移除会让所有 impl 少一个方法。**workspace 内**的实现全部由我们维护，编译期会报错；**外部**实现者（如果存在）会编译失败 |
+
+**版本策略**：项目当前是 `0.4.0`（`Cargo.toml` 的 `workspace.package.version`），
+未发布到 crates.io。0.x 版本按 semver 允许破坏性变更。删除时在提交信息里
+明确写 `BREAKING:`，并在 `docs/issues/` 记录——这是这个项目当前唯一的
+变更公告渠道。
+
+如果要更保守，可以先发一个 `0.4.x` patch 把两者标 `#[deprecated]`，等一版再删。
+**我的建议是直接删**：`Transitions` 是纯粹的死代码，给它加 deprecation 警告等于
+为一个从没被用过的东西写迁移指引。
 
 ### 删除 `setup_params()`
 
@@ -95,8 +118,9 @@ grep -rn "Transitions|state_machine" crates/
 | 迁移的 2 条 | `boundaries.rs` | 改为验 `Session.setup`，语义不变 |
 
 **关键判据不是"测试还是绿的"，而是"删掉之后有没有报警示"**：删 `setup_params`
-会让 trait 从 11 个必实现降到 10 个，所有 impl 都少一个方法。如果某个引擎其实
-依赖它，编译期就会报错。
+会让 trait 从 11 个必实现降到 10 个，所有 impl 都少一个方法。**workspace 内**如果
+某个引擎其实依赖它，编译期就会报错——这个保证只对仓库内的实现成立，外部实现者
+会得到同样的编译错误，但那是他们的构建失败，不是我们的。
 
 ## 验收标准
 
