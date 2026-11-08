@@ -83,6 +83,14 @@ pub struct GuessNumberEngine {
     ended_at_ms: Option<u128>,
     signal: Arc<ChangeSignal>,
     prompts: &'static PromptStore,
+    /// 最近一次 `reset()` 传给 `roll_target` 的 previous。
+    ///
+    /// 只给测试用：这条"阶段 → previous"的接线是 `reset()` 里唯一有分支的地方，
+    /// 而它的效果（target 换不换）在随机源下不可确定观察——进行中重置时
+    /// `roll_target(None)` 允许抽到同一个数。把输入记下来，测试才能确定性断言
+    /// 分支走对了，不必依赖"反复重置看 target 变不变"这种概率判断。
+    #[doc(hidden)]
+    pub last_reset_previous: Option<i64>,
 }
 
 impl GuessNumberEngine {
@@ -122,6 +130,7 @@ impl GuessNumberEngine {
             ended_at_ms: None,
             signal: Arc::new(ChangeSignal::new()),
             prompts: shared_prompts(),
+            last_reset_previous: None,
         };
         engine.roll_target(None);
         Ok(engine)
@@ -198,6 +207,7 @@ impl GuessNumberEngine {
     /// 重置成一局全新的游戏。配置（min/max/max_attempts）不变。
     fn reset(&mut self) {
         let previous = Self::carry_over_target(self.phase, self.target);
+        self.last_reset_previous = previous;
         self.phase = "in_progress";
         self.roll_target(previous);
         self.guesses.clear();
@@ -655,41 +665,52 @@ mod tests {
         assert_eq!(engine.phase(), "in_progress");
     }
 
-    /// 进行中重置时，`reset()` 传给 `roll_target` 的是 `None`（不强制换答案）；
-    /// 已结束重置时是 `Some(old)`（保证换一个）。
+    /// `reset()` 传给 `roll_target` 的 previous 必须随阶段变化。
     ///
-    /// 这条守的是 `reset` 里的分支判断。变异测试把它反过来时既有用例全部存活：
-    /// `start_resets_an_in_progress_game` 只验了计数清零，
-    /// `start_resets_a_finished_game_with_a_new_target` 只验了"换答案"，
+    /// - 进行中：`None` —— 不强制换答案
+    /// - 已结束：`Some(上一局答案)` —— 保证换一个
+    ///
+    /// 这条守的是 `reset` 里的分支接线。变异测试把它反过来时既有用例全部存活：
+    /// `start_resets_an_in_progress_game` 只验计数清零，
+    /// `start_resets_a_finished_game_with_a_new_target` 只验"换答案"，
     /// 没有人验证**进行中重置不保证换答案**。
     ///
-    /// 用确定性断言，不靠概率：直接测 `carry_over_target` 的返回值。
-    /// 第一版是"反复重置 32 次看 target 会不会变"，那有 2^-32 的 flake 概率，
-    /// 被 review 指出后改成现在这种。
+    /// **为什么读 `last_reset_previous` 而不是看 target 变没变**：
+    /// 进行中重置时 `roll_target(None)` 允许抽到同一个数，所以"target 没变"
+    /// 只是概率事件。第一版写"反复重置 32 次看有没有不变"，有 2^-32 的 flake
+    /// 概率（被 review 指出）。记录输入之后，断言变成完全确定性的。
     #[test]
-    fn resetting_an_in_progress_game_does_not_carry_the_old_target() {
+    fn reset_feeds_the_right_previous_to_roll_target() {
+        let mut engine = engine();
+
+        // 进行中重置：previous 必须是 None
+        engine
+            .handle_action("start", ActionParams::default())
+            .unwrap();
         assert_eq!(
-            GuessNumberEngine::carry_over_target("in_progress", 42),
-            None,
+            engine.last_reset_previous, None,
             "进行中重置不该带上一局答案"
         );
+
+        // 已结束重置：previous 必须是 Some(上一局答案)
+        let target = engine.target();
+        let _ = guess(&mut engine, Value::from(target));
+        assert_eq!(engine.phase(), "won");
+
+        engine
+            .handle_action("start", ActionParams::default())
+            .unwrap();
         assert_eq!(
-            GuessNumberEngine::carry_over_target("won", 42),
-            Some(42),
+            engine.last_reset_previous,
+            Some(target),
             "已结束重置要带上答案，好让 roll_target 避开它"
-        );
-        assert_eq!(
-            GuessNumberEngine::carry_over_target("lost", 42),
-            Some(42),
-            "输掉之后重开同样要换答案"
         );
     }
 
-    /// 端到端确认上面的分支确实接进了 `reset()`。
+    /// 端到端：已结束重置后答案确实换了。
     ///
-    /// 只测纯函数不够——`reset()` 可能没用它。这条用"已结束 → 重开"验证
-    /// target 确实换了（`Some(old)` 路径生效），反方向（进行中不换）由
-    /// `start_resets_an_in_progress_game` 与上面的纯函数测试共同保证。
+    /// 上一条验的是"传对了输入"，这一条验"输入确实产生了效果"——两者缺一不可。
+    /// 只测输入可能是"传了个没用的值"；只测效果则无法确定性断言进行中那条路径。
     #[test]
     fn resetting_after_a_finish_actually_rotates_the_target() {
         let mut engine = engine_with(serde_json::json!({ "min_num": 1, "max_num": 2 })).unwrap();
@@ -697,12 +718,11 @@ mod tests {
             .handle_action("start", ActionParams::default())
             .unwrap();
 
-        // 赢下这一局
         let target = engine.target();
         let _ = guess(&mut engine, Value::from(target));
         assert_eq!(engine.phase(), "won");
 
-        // 重开必须换答案：2 个候选，一定换成另一个
+        // 2 个候选，`Some(old)` 路径保证换成另一个
         engine
             .handle_action("start", ActionParams::default())
             .unwrap();
