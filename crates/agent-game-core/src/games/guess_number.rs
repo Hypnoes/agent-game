@@ -82,7 +82,6 @@ pub struct GuessNumberEngine {
     last_action: Instant,
     ended_at_ms: Option<u128>,
     signal: Arc<ChangeSignal>,
-    setup: CreateParams,
     prompts: &'static PromptStore,
 }
 
@@ -122,7 +121,6 @@ impl GuessNumberEngine {
             last_action: now,
             ended_at_ms: None,
             signal: Arc::new(ChangeSignal::new()),
-            setup: params.without("player_token"),
             prompts: shared_prompts(),
         };
         engine.roll_target(None);
@@ -132,6 +130,20 @@ impl GuessNumberEngine {
     #[must_use]
     pub fn min(&self) -> i64 {
         self.min
+    }
+
+    /// 上一次行动的时刻。
+    ///
+    /// 只给测试用：`check_timeout` 的判据是 `now - last_action > IDLE_TIMEOUT`，
+    /// 而 `last_action` 是**构造时刻**。测试若拿自己的 `Instant::now()` 去推边界，
+    /// 会漏掉"构造到这里"的时钟差——高负载下那几微秒足以让边界断言翻面
+    /// （`millisecond_bounds.rs` 有过一次真实的 flaky）。
+    ///
+    /// 拿这个基准去加偏移，边界才是精确的。生产路径永远不调它。
+    #[doc(hidden)]
+    #[must_use]
+    pub fn last_action(&self) -> Instant {
+        self.last_action
     }
 
     #[must_use]
@@ -452,10 +464,6 @@ impl GameEngine for GuessNumberEngine {
         self.prompts
     }
 
-    fn setup_params(&self) -> CreateParams {
-        self.setup.clone()
-    }
-
     fn describe_tools(&self) -> Vec<agent_game_server_domain::game::ToolSpec> {
         use serde_json::json;
 
@@ -633,6 +641,46 @@ mod tests {
             .unwrap();
         assert_eq!(engine.guess_count(), 0);
         assert_eq!(engine.phase(), "in_progress");
+    }
+
+    /// 进行中重置时，`reset()` 传的是 `None`（不强制换答案）；已结束重置时传
+    /// `Some(old)`（保证换一个）。
+    ///
+    /// 这条守的是 `reset` 里 `if self.phase == "in_progress"` 那个比较符——
+    /// 改成 `!=` 会交换两个分支的语义。变异测试把 `==` 改成 `!=` 时既有用例全部
+    /// 存活：`start_resets_an_in_progress_game` 只验了计数清零，
+    /// `start_resets_a_finished_game_with_a_new_target` 只验了"换答案"，
+    /// 没有人验证**进行中重置不保证换答案**。
+    ///
+    /// 验证方式：用 2 个候选（`min=1, max=2`）的引擎，反复「进行中 → start」。
+    /// 如果 `reset()` 误传了 `Some(old)`，`roll_target` 会**强制**换值，于是
+    /// target 每次都翻面；正确实现下 `None` 分支走随机，允许连续相同。
+    ///
+    /// 这个判断不需要概率假设：跑 32 次，正确实现下 target 保持不变的次数
+    /// 不会恰好是 0（概率 (1/2)^32，可以忽略），而错误实现下必然是 0。
+    #[test]
+    fn resetting_an_in_progress_game_does_not_force_a_new_target() {
+        let mut engine = engine_with(serde_json::json!({ "min_num": 1, "max_num": 2 })).unwrap();
+        engine
+            .handle_action("start", ActionParams::default())
+            .unwrap();
+
+        let mut unchanged = 0;
+        for _ in 0..32 {
+            let before = engine.target();
+            engine
+                .handle_action("start", ActionParams::default())
+                .unwrap();
+            if engine.target() == before {
+                unchanged += 1;
+            }
+        }
+
+        assert!(
+            unchanged > 0,
+            "进行中重置不该强制换答案。32 次里 target 每次都变了，说明 \
+             reset() 把 `phase == \"in_progress\"` 的分支判断反了"
+        );
     }
 
     #[test]

@@ -417,9 +417,6 @@ async fn an_engine_can_declare_its_own_finished_states() {
         fn prompts(&self) -> &agent_game_server_core::PromptStore {
             &self.prompts
         }
-        fn setup_params(&self) -> CreateParams {
-            CreateParams::default()
-        }
     }
 
     let mut registry = Registry::new();

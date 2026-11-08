@@ -152,10 +152,6 @@ impl agent_game_server_core::GameEngine for TwoPlayerEngine {
         &self.prompts
     }
 
-    fn setup_params(&self) -> CreateParams {
-        CreateParams::default()
-    }
-
     // 工具面必须由引擎自己声明：mcp 层不再硬编码任何游戏的 schema。
     // 这个替身不声明的话，`two_player_join` 会被当成"未知工具"。
     fn describe_tools(&self) -> Vec<agent_game_server_core::ToolSpec> {

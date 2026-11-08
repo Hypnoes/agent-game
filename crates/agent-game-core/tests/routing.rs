@@ -196,9 +196,6 @@ async fn timeout_records_serialise_with_the_session_and_the_type() {
                 std::sync::OnceLock::new();
             PROMPTS.get_or_init(|| agent_game_server_core::PromptStore::new("[templates]\n"))
         }
-        fn setup_params(&self) -> CreateParams {
-            CreateParams::default()
-        }
     }
 
     let mut registry = Registry::new();
@@ -440,9 +437,6 @@ async fn the_same_expired_event_is_reported_only_once() {
             static PROMPTS: std::sync::OnceLock<agent_game_server_core::PromptStore> =
                 std::sync::OnceLock::new();
             PROMPTS.get_or_init(|| agent_game_server_core::PromptStore::new("[templates]\n"))
-        }
-        fn setup_params(&self) -> CreateParams {
-            CreateParams::default()
         }
     }
 

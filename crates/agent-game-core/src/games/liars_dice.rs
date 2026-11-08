@@ -120,7 +120,6 @@ pub struct LiarsDiceEngine {
     loser: Option<usize>,
     last_action: Instant,
     signal: Arc<ChangeSignal>,
-    setup: CreateParams,
     prompts: &'static PromptStore,
     turn_timeout: Duration,
     block_budget: Duration,
@@ -164,7 +163,6 @@ impl LiarsDiceEngine {
             loser: None,
             last_action: now,
             signal: Arc::new(ChangeSignal::new()),
-            setup: params.without("player_token"),
             prompts: shared_prompts(),
             turn_timeout: config.turn_timeout,
             block_budget: config.block_budget,
@@ -917,10 +915,6 @@ impl GameEngine for LiarsDiceEngine {
 
     fn prompts(&self) -> &PromptStore {
         self.prompts
-    }
-
-    fn setup_params(&self) -> CreateParams {
-        self.setup.clone()
     }
 
     fn describe_tools(&self) -> Vec<agent_game_server_domain::game::ToolSpec> {

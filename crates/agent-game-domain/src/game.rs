@@ -21,7 +21,7 @@ use std::time::Instant;
 use serde_json::Value;
 
 use agent_game_server_infra::error::EngineError;
-use agent_game_server_infra::params::{ActionParams, CreateParams};
+use agent_game_server_infra::params::ActionParams;
 use agent_game_server_infra::prompt::{Ctx, PromptStore};
 use agent_game_server_infra::signal::ChangeSignal;
 
@@ -214,9 +214,6 @@ pub trait GameEngine: std::fmt::Debug + Send {
 
     /// 提示词仓库（热重载用）。
     fn prompts(&self) -> &PromptStore;
-
-    /// 创建时的配置参数，用于"同一张桌子"的匹配判断。
-    fn setup_params(&self) -> CreateParams;
 
     /// 该引擎声明的 MCP 工具：`[(name, description, input_schema)]`。
     ///

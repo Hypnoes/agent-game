@@ -569,9 +569,6 @@ mod tests {
                     agent_game_server_infra::prompt::PromptStore::new("[templates]\n")
                 })
             }
-            fn setup_params(&self) -> CreateParams {
-                CreateParams::default()
-            }
         }
 
         let mut registry = Registry::new();
@@ -642,9 +639,6 @@ mod tests {
                 PROMPTS.get_or_init(|| {
                     agent_game_server_infra::prompt::PromptStore::new("[templates]\n")
                 })
-            }
-            fn setup_params(&self) -> CreateParams {
-                CreateParams::default()
             }
         }
 

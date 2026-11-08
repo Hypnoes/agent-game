@@ -5,7 +5,7 @@
 | 本地编号 | 006 |
 | GitHub Issue | [#8](https://github.com/Hypnoes/agent-game/issues/8) |
 | 分支 | `issue-8-delete-dead-code` |
-| 状态 | 规划中 |
+| 状态 | 实施中 |
 
 ## 背景
 
@@ -153,3 +153,59 @@ crates/agent-game-core/src/games/state_machine.rs:12:pub struct Transitions {
 - `phase` 枚举化（009）
 - `LiarsDice` 的建模问题（008）
 - `testing` 模块的 cfg 修正（007）
+
+---
+
+## 实施记录
+
+### 实际删掉的东西
+
+比规划多删了两个字段——它们是被 `setup_params()` "养活"的僵尸：
+
+| 项 | 位置 | 说明 |
+|---|---|---|
+| `state_machine` 模块 | `crates/agent-game-core/src/games/state_machine.rs` | 规划内 |
+| `GameEngine::setup_params()` | `crates/agent-game-domain/src/game.rs` | 规划内 |
+| 9 处 impl | 两个引擎 + `DummyEngine` + 2 处测试桩 + mcp/server 测试桩 | 随 trait 方法消失 |
+| **`LiarsDiceEngine::setup` 字段** | `liars_dice.rs` | 规划外 |
+| **`GuessNumberEngine::setup` 字段** | `guess_number.rs` | 规划外 |
+
+后两个是 `cargo build` 报出来的：`field 'setup' is never read`。它们是
+`setup_params()` 唯一的读者——删掉方法之后，这两个字段变成纯僵尸。**只靠
+grep 看不出这层关系**，这条经验写进了 AGENTS.md 第 18 条。
+
+### 测试数变化
+
+- 基线 527
+- 删 `state_machine` 的 3 条单元测试 → 524
+- `boundaries.rs` 的 3 条 `setup_params` 测试**改造**为验 `Session.setup`
+  （数量不变）→ 仍是 524
+
+与规划里"527 - 3 = 524"的预期一致。
+
+### 改造的测试
+
+原来测 `engine.setup_params()`，现在测 `session.setup`：
+
+- `the_session_keeps_the_creation_configuration`
+- `the_session_setup_never_includes_the_player_token`
+- `the_session_carries_the_configuration`
+
+新增 `manager()` 辅助函数（`boundaries.rs`），造一个注册了两个内置游戏的
+`GameManager`——只有经由 `create()` 才会产生 `Session`。
+
+### 验收
+
+- 524 passed、fmt 零差异、clippy 零告警
+- `grep -rnE "Transitions|state_machine|setup_params" crates/` 只剩
+  `without()` 的测试用例与文档措辞
+
+### review 后的两个决定
+
+**1. 保留 `CreateParams::without()`。** 它现在没有生产调用点（原本是
+`setup_params()` 的配套），但仍是一个公开、通用的「复制并移除键」API。删除它会
+扩大本次源兼容性破坏范围，而且并非删除 `setup_params()` 所必需。如果将来要清理，
+应作为单独的 API 兼容性决策，而不是因为"仓库内只剩测试用"就顺手删。
+
+**2. 提交标题带 `BREAKING:`。** review 指出「0.x 允许破坏性变更」不等于「发布时
+可以保持 0.4.0」——版本号要升到 0.5.0，提交标题也应明确标出，两者不互相替代。
