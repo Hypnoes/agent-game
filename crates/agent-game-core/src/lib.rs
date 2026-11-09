@@ -52,6 +52,11 @@ pub mod engine {
 pub use agent_game_server_domain as domain;
 
 /// 旧路径 `core::testing` 的别名。测试替身现在住在 `domain::testing`。
+///
+/// 门控与 domain 一致：默认**不编译**，只有测试构建或显式开 `testing`
+/// feature 时才存在。上一版是无条件 `pub mod`，于是 `DummyEngine` 与它返回的
+/// 假"秘密" `admin-only` 都进了 release rlib（实测 646KB 的 rlib 里能串扫到）。
+#[cfg(any(test, feature = "testing"))]
 pub mod testing {
     pub use agent_game_server_domain::testing::*;
 }

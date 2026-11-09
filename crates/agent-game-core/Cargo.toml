@@ -9,8 +9,11 @@ repository.workspace = true
 description = "agent-game 的纯逻辑内核：规则、预算、身份、等待原语、提示词与 session 路由"
 
 [features]
-# 暴露 `testing` 模块，让 server / mcp 两个 crate 的集成测试共用一个引擎替身。
-testing = []
+# 暴露 `testing` 模块（转发到 domain 的那份 `DummyEngine`）。
+#
+# **必须是转发而不是空 feature**：空 `testing = []` 打开后什么也不做——
+# 上一版就是这样，给 core 开 `features = ["testing"]` 对 domain 毫无作用。
+testing = ["agent-game-server-domain/testing"]
 
 [dependencies]
 agent-game-server-infra.workspace = true
@@ -26,6 +29,9 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+# 自引用：本 crate 的集成测试（`tests/*.rs`）是独立 crate，`cfg(test)` 对它们
+# 不生效，拿不到 `crate::testing`。开自己的 `testing` feature 才能用。
+agent-game-server-core = { path = ".", features = ["testing"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "test-util", "macros"] }
 proptest = "1"
 insta = { version = "1", features = ["json"] }

@@ -78,6 +78,37 @@ jobs:
         # 这个脚本把 `<script>` 抽出来在最小 DOM 桩里跑，验证转义、状态归类与渲染。
         run: node tools/verify-admin-ui.js
 
+      - name: 产物里无测试替身
+        # `domain::testing::DummyEngine` 不该进发布产物——它的 `admin_view()`
+        # 会返回假的"秘密" `admin-only`。007（#9）之前它是无条件 `pub mod`，
+        # 实测 domain 的 rlib 里能串扫到这两个字符串。
+        #
+        # 结构性的门控写在 `crates/agent-game-core/tests/testing_gate.rs` 里，
+        # 但那条用例只验"cfg 与 Cargo.toml 写对了"。这一条验最终事实：
+        # release 产物里真的没有。两道防线各管一段。
+        #
+        # **不要加 `--all-features`**：那会主动打开 `testing`，自己把替身
+        # 塞回去（实测 643,286 字节的 rlib，`DummyEngine` 在）。
+        #
+        # 也**不要**加 `-p`：只构建 core 会漏掉 domain，只构建 domain 会漏掉
+        # 经过 core 再导出的路径。必须整个 workspace。
+        run: |
+          set -euo pipefail
+          cargo build --release --workspace
+          found=0
+          for rlib in target/release/libagent_game*.rlib; do
+            # **不要用 `strings "$rlib" | grep -q ...`**：`grep -q` 命中即退出，
+            # `strings` 会收到 SIGPIPE，在 `pipefail` 下整条管道返回非零，
+            # `if` 把它当成"没找到"——恰恰在**有泄露**的时候漏报。
+            # 改成把 grep 输出重定向掉、用退出码判断，管道就不会提前关闭。
+            if strings "$rlib" | grep -E 'DummyEngine|admin-only' > /dev/null; then
+              echo "::error::测试替身泄漏进发布产物: $rlib"
+              found=1
+            fi
+          done
+          if [ "$found" -ne 0 ]; then exit 1; fi
+          echo "发布产物里没有 DummyEngine / admin-only"
+
   mutation:
     name: 变异测试
     # 单独一个 job：它要反复重跑整套测试，比前两个慢一个数量级。

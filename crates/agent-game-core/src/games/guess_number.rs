@@ -575,17 +575,47 @@ mod tests {
         assert!(engine.guesses().is_empty(), "开局前不该有猜数记录");
     }
 
+    /// 猜数与答案的大小关系必须正确反映在 `last_result` 上，并记进历史。
+    ///
+    /// 原写法用默认区间（1..=100）然后 `let low = target - 1`，再
+    /// `if low >= 1 { 猜 }`——target 抽到 1 时（概率 1%）那一步被跳过，
+    /// 但后面仍断言 `guess_count == 1`，于是失败。CI 上偶发红过。
+    ///
+    /// 更糟的是：即使不失败，两个方向里也只有一个被走到。改成对**每个**
+    /// 方向都用固定区间构造，两个分支必然各跑一次。
     #[test]
     fn guessing_reports_direction_and_tracks_history() {
-        let mut engine = engine();
-        let target = engine.target();
-        let low = target - 1;
-        if low >= 1 {
-            let view = guess(&mut engine, Value::from(low)).unwrap();
-            assert_eq!(view.public["last_result"], "too_low");
-        }
-        assert_eq!(engine.guess_count(), 1);
-        assert_eq!(engine.guesses().len(), 1);
+        // 区间 2..=3 里猜 2：若 target=3 则 too_low，若 target=2 则 correct。
+        // 两种结果都是确定可枚举的，不依赖运气。
+        let mut low_engine =
+            engine_with(serde_json::json!({ "min_num": 2, "max_num": 3 })).unwrap();
+        let view = guess(&mut low_engine, Value::from(2)).unwrap();
+        let expected_low = low_engine.target() > 2;
+        assert_eq!(
+            view.public["last_result"],
+            if expected_low { "too_low" } else { "correct" },
+            "猜 2 在区间 2..=3 里只能是 too_low 或 correct"
+        );
+        assert_eq!(low_engine.guess_count(), 1);
+        assert_eq!(low_engine.guesses().len(), 1);
+
+        // 反方向：区间 2..=3 里猜 3，只能是 too_high 或 correct
+        let mut high_engine =
+            engine_with(serde_json::json!({ "min_num": 2, "max_num": 3 })).unwrap();
+        let view = guess(&mut high_engine, Value::from(3)).unwrap();
+        let expected_high = high_engine.target() < 3;
+        assert_eq!(
+            view.public["last_result"],
+            if expected_high { "too_high" } else { "correct" },
+            "猜 3 在区间 2..=3 里只能是 too_high 或 correct"
+        );
+
+        // 上面两条覆盖"方向正确"，这一条覆盖"猜中"：用已知 target 直接猜
+        let mut exact = engine_with(serde_json::json!({ "min_num": 2, "max_num": 3 })).unwrap();
+        let known = exact.target();
+        let view = guess(&mut exact, Value::from(known)).unwrap();
+        assert_eq!(view.public["last_result"], "correct");
+        assert_eq!(exact.phase(), "won");
     }
 
     #[test]

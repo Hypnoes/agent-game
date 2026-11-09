@@ -13,7 +13,7 @@ name = "agent-game-server"
 path = "src/main.rs"
 
 [dependencies]
-agent-game-server-core = { workspace = true, features = ["testing"] }
+agent-game-server-core.workspace = true
 rand_chacha.workspace = true
 agent-game-server-mcp.workspace = true
 axum.workspace = true
@@ -36,6 +36,9 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+# 生产依赖不能开 `testing`：workspace 的 feature 会被 union，那一处会把
+# `DummyEngine` 拖进 `cargo build --release`。测试构建单独再声明一次。
+agent-game-server-core = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["test-util", "rt-multi-thread", "macros", "net"] }
 http-body-util = "0.1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }

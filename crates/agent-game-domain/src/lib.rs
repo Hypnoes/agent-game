@@ -34,4 +34,5 @@ pub mod registry;
 pub mod session;
 pub mod snapshot;
 pub mod supervisor;
+#[cfg(any(test, feature = "testing"))]
 pub mod testing;
