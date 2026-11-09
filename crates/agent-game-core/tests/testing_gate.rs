@@ -389,6 +389,59 @@ fn the_core_reexport_is_gated_too() {
     );
 }
 
+/// 没有任何包的 feature **转发**到 `testing`。
+///
+/// 这是一个已知的检查边界，写在这里而不是假装不存在。
+///
+/// # 什么情况会漏
+///
+/// 如果某个包写 `default = ["agent-game-server-core/testing"]`，那
+/// server → core 这条**依赖声明**的 `features` 是空的，`default` 也只展开
+/// 到 core 自己的 feature，看起来毫无问题。但 cargo 实际会启用 core 的
+/// `testing`，进而（经 core 的转发）启用 domain 的 `testing`。
+///
+/// 要正确覆盖这一类，需要在依赖图上做**全局**的 feature 传播——本质上是把
+/// cargo 的 feature resolver 重写一遍。那是几百行的活，而它算错的后果只是
+/// "看门漏报"，不是"发布出错"——最终的裁判是 CI 的产物串扫
+/// （`.github/workflows/ci.yml` 的「产物里无测试替身」）。
+///
+/// # 现在为什么够用
+///
+/// 实测当前 workspace 里只有 core 自己的 `testing -> [domain/testing]`
+/// 这一条转发，没有任何包的 default 或其它 feature 转发到 `testing`。
+/// 这条用例把"存在这种转发"变成会红的信号——将来有人加了，就会看到这里红，
+/// 从而知道要去补全局传播或者手动确认。
+#[test]
+fn no_other_feature_forwards_into_testing() {
+    let meta = load_metadata();
+    let mut offenders = Vec::new();
+
+    for (package, feature_map) in &meta.features {
+        for (feature, activates) in feature_map {
+            // core 自己的 `testing -> [domain/testing]` 是本设计要求的转发，
+            // 跳过它。
+            if package == "agent-game-server-core" && feature == "testing" {
+                continue;
+            }
+            // 别的包/别的 feature 里出现 `.../testing`，说明它们在转发测试能力。
+            for target in activates {
+                if target == "testing" || target.ends_with("/testing") {
+                    offenders.push(format!("{package}: {feature} -> {target}"));
+                }
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "发现有 feature 转发到 `testing`。这本身不是错，但**当前的看门检查\n\
+         不做全局 feature 传播**，覆盖不到这种情形——见本用例的文档注释。\n\
+         要么手动确认这条转发不会在生产构建里生效，要么把检查升级成\n\
+         全局传播后删掉这条断言。实际：\n{}",
+        offenders.join("\n")
+    );
+}
+
 /// `core` 的 `testing` feature 必须**转发**到 domain。
 ///
 /// 写成空 `testing = []` 的话，给 core 开这个 feature 对 domain 毫无作用
