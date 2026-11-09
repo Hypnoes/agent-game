@@ -35,7 +35,7 @@ fn started(player_count: usize, dice_per_player: usize) -> (LiarsDiceEngine, Vec
             .unwrap();
     }
     let tokens = engine
-        .players
+        .players()
         .iter()
         .map(|player| player.token.clone())
         .collect();
@@ -43,10 +43,8 @@ fn started(player_count: usize, dice_per_player: usize) -> (LiarsDiceEngine, Vec
 }
 
 fn script(engine: &mut LiarsDiceEngine, faces: Vec<Vec<i64>>) {
-    assert_eq!(faces.len(), engine.players.len());
-    for (player, dice) in engine.players.iter_mut().zip(faces) {
-        player.dice = dice;
-    }
+    assert_eq!(faces.len(), engine.players().len());
+    engine.set_dice(faces);
 }
 
 fn bid(
@@ -131,15 +129,15 @@ fn the_wildcard_changes_the_actual_count_not_just_the_display() {
 fn join_after_start_is_refused() {
     // 否则新玩家会触发 `start_game()`，把进行中的对局推倒重来。
     let (mut engine, _tokens) = started(2, 3);
-    let before: Vec<Vec<i64>> = engine.players.iter().map(|p| p.dice.clone()).collect();
+    let before: Vec<Vec<i64>> = engine.players().iter().map(|p| p.dice.clone()).collect();
 
     let mut params = serde_json::Map::new();
     params.insert("player_name".to_owned(), Value::from("Late"));
     let result = engine.handle_action("join", ActionParams::new(params));
 
     assert!(result.is_err(), "开局后加入必须被拒绝");
-    assert_eq!(engine.players.len(), 2, "人数不变");
-    let after: Vec<Vec<i64>> = engine.players.iter().map(|p| p.dice.clone()).collect();
+    assert_eq!(engine.players().len(), 2, "人数不变");
+    let after: Vec<Vec<i64>> = engine.players().iter().map(|p| p.dice.clone()).collect();
     assert_eq!(before, after, "骰子不能被重摇");
 }
 

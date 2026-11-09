@@ -32,7 +32,7 @@ fn dice_engine() -> (LiarsDiceEngine, Vec<String>) {
             .unwrap();
     }
     let tokens = engine
-        .players
+        .players()
         .iter()
         .map(|player| player.token.clone())
         .collect();

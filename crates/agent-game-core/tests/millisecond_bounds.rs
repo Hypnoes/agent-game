@@ -28,7 +28,7 @@ fn dice_engine() -> (LiarsDiceEngine, Vec<String>) {
             .unwrap();
     }
     let tokens = engine
-        .players
+        .players()
         .iter()
         .map(|player| player.token.clone())
         .collect();
@@ -144,7 +144,7 @@ fn the_reconnected_flag_distinguishes_a_reconnect_from_a_fresh_join() {
         "空 token 不是重连: {}",
         view.private
     );
-    assert_eq!(engine.players.len(), 2);
+    assert_eq!(engine.players().len(), 2);
 }
 
 #[test]
@@ -159,7 +159,7 @@ fn a_join_with_a_known_token_reports_reconnected() {
 
     assert_eq!(view.private["reconnected"], true, "{}", view.private);
     assert_eq!(view.private["player_index"], 0);
-    assert_eq!(engine.players.len(), 2, "重连不新增玩家");
+    assert_eq!(engine.players().len(), 2, "重连不新增玩家");
 }
 
 // ═══════════════════════════════════════════
@@ -215,7 +215,7 @@ fn in_a_three_player_game_the_loser_opens_the_next_round() {
             .handle_action("join", ActionParams::new(params))
             .unwrap();
     }
-    let tokens: Vec<String> = engine.players.iter().map(|p| p.token.clone()).collect();
+    let tokens: Vec<String> = engine.players().iter().map(|p| p.token.clone()).collect();
 
     engine.set_dice(vec![vec![2, 2, 2], vec![3, 3, 3], vec![4, 4, 4]]);
     engine.set_current_turn(0);
@@ -229,7 +229,7 @@ fn in_a_three_player_game_the_loser_opens_the_next_round() {
     engine.handle_action("bid", ActionParams::new(raw)).unwrap();
 
     // 先把 P1 的骰子清到只剩一颗，这样一输就出局
-    engine.players[1].dice.truncate(1);
+    engine.set_player_dice(1, vec![1]);
 
     let mut raw = serde_json::Map::new();
     raw.insert("player_index".to_owned(), Value::from(1));
@@ -240,7 +240,7 @@ fn in_a_three_player_game_the_loser_opens_the_next_round() {
 
     assert_eq!(engine.phase(), "bidding", "还剩两人，对局继续");
     assert_eq!(engine.loser(), Some(1));
-    assert!(!engine.players[1].alive, "P1 骰子掉光，必须出局");
+    assert!(!engine.players()[1].is_alive(), "P1 骰子掉光，必须出局");
     assert_eq!(
         engine.current_turn(),
         2,
@@ -248,7 +248,7 @@ fn in_a_three_player_game_the_loser_opens_the_next_round() {
          而不是停在已出局的 P1 身上"
     );
     assert!(
-        engine.players[engine.current_turn()].alive,
+        engine.players()[engine.current_turn()].is_alive(),
         "current_turn 必须指向存活玩家"
     );
 }
@@ -274,11 +274,11 @@ fn a_timed_out_player_never_keeps_the_turn_after_being_eliminated() {
     let far = Instant::now() + engine.turn_timeout() + Duration::from_secs(1);
     let event = engine.check_timeout(far).unwrap().expect("应该超时");
     assert_eq!(event.kind, "turn_timeout");
-    assert!(!engine.players[1].alive, "一颗骰子超时即出局");
+    assert!(!engine.players()[1].is_alive(), "一颗骰子超时即出局");
     assert_eq!(engine.phase(), "bidding", "还剩两人，对局继续");
     assert_ne!(engine.current_turn(), 1, "不能把回合留在已出局的人身上");
     assert!(
-        engine.players[engine.current_turn()].alive,
+        engine.players()[engine.current_turn()].is_alive(),
         "current_turn 必须指向存活玩家"
     );
 }
@@ -335,7 +335,7 @@ fn leaving_ones_doubles_rather_than_adds() {
             .handle_action("join", ActionParams::new(params))
             .unwrap();
     }
-    let tokens: Vec<String> = engine.players.iter().map(|p| p.token.clone()).collect();
+    let tokens: Vec<String> = engine.players().iter().map(|p| p.token.clone()).collect();
     engine.set_current_turn(0);
 
     // 叫 3×1 → 叫非 1 需要 >= 6

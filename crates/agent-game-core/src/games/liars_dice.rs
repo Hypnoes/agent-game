@@ -45,12 +45,27 @@ fn shared_prompts() -> &'static PromptStore {
 }
 
 /// 一名玩家。
+///
+/// # 为什么 `alive` 是私有字段而不是从 `dice` 派生
+///
+/// 规则是"骰子掉光即出局"，但**还没发骰**也是零骰——两者不同。
+/// `Player::new` 造出来时 `dice` 是空的、`alive` 是 `true`；`start_game()`
+/// 只给 `alive` 的玩家发骰。如果把 `alive` 改写成
+/// `!dice.is_empty()`，新玩家会被判成出局，`start_game` 跳过所有人，
+/// 对局永远开不了。
+///
+/// 所以保留这个字段，但**私有化**：只允许 `eliminate()` / `start_game()`
+/// 通过本模块的路径修改。这样"存了两个真相"的危害从"外部可以随手改"降成
+/// "模块内部要保证一致"——后者是有测试盯着的。
+///
+/// 想彻底单真相需要 `dice: Option<Vec<i64>>`（`None` = 未发骰），那会扩散到
+/// 每一处读 `dice` 的地方，属于独立一轮重构（见 `docs/issues/008`）。
 #[derive(Clone, Debug)]
 pub struct Player {
     pub name: String,
     pub token: String,
     pub dice: Vec<i64>,
-    pub alive: bool,
+    alive: bool,
 }
 
 impl Player {
@@ -61,6 +76,15 @@ impl Player {
             dice: Vec::new(),
             alive: true,
         }
+    }
+
+    /// 是否还在场上。
+    ///
+    /// 未发骰的新玩家也是"在场上"（`dice` 空但 `alive` 为真），
+    /// 因此**不能**用 `!dice.is_empty()` 代替。
+    #[must_use]
+    pub fn is_alive(&self) -> bool {
+        self.alive
     }
 }
 
@@ -112,7 +136,7 @@ pub struct LiarsDiceEngine {
     player_count: usize,
     dice_per_player: usize,
     phase: &'static str,
-    pub players: Vec<Player>,
+    players: Vec<Player>,
     current_turn: usize,
     current_call: Option<Call>,
     call_history: Vec<Call>,
@@ -174,6 +198,16 @@ impl LiarsDiceEngine {
         self.player_count
     }
 
+    /// 全部玩家（只读）。
+    ///
+    /// `players` 字段是私有的：之前是 `pub`，测试里直接
+    /// `engine.players[1].alive = false` 就把一个还带着骰子的玩家标成出局，
+    /// 绕过所有不变量。只读访问器让"看"和"改"分开——改要走引擎自己的方法。
+    #[must_use]
+    pub fn players(&self) -> &[Player] {
+        &self.players
+    }
+
     #[must_use]
     pub fn dice_per_player(&self) -> usize {
         self.dice_per_player
@@ -195,6 +229,18 @@ impl LiarsDiceEngine {
             for (player, dice) in self.players.iter_mut().zip(faces) {
                 player.dice = dice;
             }
+        }
+    }
+
+    /// 直接摆某个玩家的骰子。同样只给测试用。
+    ///
+    /// 出局与否跟随骰子：摆成空就自动标成出局，摆成非空就复活。
+    /// **这是 `alive` 唯一的写入口之一**——它是私有字段，外部改不动。
+    #[doc(hidden)]
+    pub fn set_player_dice(&mut self, player_index: usize, dice: Vec<i64>) {
+        if let Some(player) = self.players.get_mut(player_index) {
+            player.alive = !dice.is_empty();
+            player.dice = dice;
         }
     }
 
@@ -249,7 +295,7 @@ impl LiarsDiceEngine {
     pub fn total_dice(&self) -> i64 {
         self.players
             .iter()
-            .filter(|player| player.alive)
+            .filter(|player| player.is_alive())
             .map(|player| i64::try_from(player.dice.len()).unwrap_or(i64::MAX))
             .sum()
     }
@@ -270,7 +316,7 @@ impl LiarsDiceEngine {
         self.players
             .iter()
             .enumerate()
-            .filter(|(_, player)| player.alive)
+            .filter(|(_, player)| player.is_alive())
             .map(|(index, _)| index)
             .collect()
     }
@@ -283,7 +329,7 @@ impl LiarsDiceEngine {
         }
         for step in 1..=count {
             let index = (player_index + step) % count;
-            if self.players[index].alive {
+            if self.players[index].is_alive() {
                 return index;
             }
         }
@@ -293,7 +339,7 @@ impl LiarsDiceEngine {
 
     /// 本轮输家先叫下一轮；若他已被淘汰，则顺延到下一位存活玩家。
     fn next_turn_after(&self, player_index: usize) -> usize {
-        if self.players.get(player_index).is_some_and(|p| p.alive) {
+        if self.players.get(player_index).is_some_and(Player::is_alive) {
             return player_index;
         }
         self.next_alive_index(player_index)
@@ -332,7 +378,7 @@ impl LiarsDiceEngine {
         let Some(player) = self.players.get(player_index) else {
             return Err(EngineError::NotFound(player_index.to_string()));
         };
-        if !player.alive {
+        if !player.is_alive() {
             return Err(EngineError::invalid(format!(
                 "玩家 {player_index} 已出局，不能行动"
             )));
@@ -385,7 +431,7 @@ impl LiarsDiceEngine {
     fn start_game(&mut self) {
         let mut rng = rand::rng();
         for player in &mut self.players {
-            player.dice = if player.alive {
+            player.dice = if player.is_alive() {
                 (0..self.dice_per_player)
                     .map(|_| rng.random_range(1..=6))
                     .collect()
@@ -512,7 +558,7 @@ impl LiarsDiceEngine {
         // 先算存活人数：下面要可变借用 `players`，同一个表达式里不能再读 self
         let sudden_death = self.alive_indices().len() <= 2;
         if let Some(player) = self.players.get_mut(player_index)
-            && player.alive
+            && player.is_alive()
         {
             if sudden_death {
                 player.dice.clear();
@@ -561,7 +607,7 @@ impl LiarsDiceEngine {
             "current_call": current_call,
             "last_message": self.current_call.as_ref().map_or("", |call| call.message.as_str()),
             "players": self.players.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
-            "alive": self.players.iter().map(|p| p.alive).collect::<Vec<_>>(),
+            "alive": self.players.iter().map(Player::is_alive).collect::<Vec<_>>(),
             "dice_per_player": self.dice_per_player,
             "call_history": self.call_history.iter().map(|call| serde_json::json!({
                 "player": call.player_idx,
