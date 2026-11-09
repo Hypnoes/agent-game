@@ -480,8 +480,23 @@ async fn the_admin_list_uses_the_envelope() {
     let rows = body["games"].as_array().unwrap();
     assert_eq!(rows.len(), 1);
     // 信封：框架字段在顶层，引擎状态在 state 里
-    assert!(rows[0]["session_id"].is_string());
-    assert!(rows[0]["state"]["target"].is_number());
+    // `session_id`：与创建时那个精确比较，不是"是字符串"就完事
+    let created_id = rows[0]["session_id"]
+        .as_str()
+        .expect("session_id 必须是字符串");
+    assert!(
+        created_id.len() >= 8,
+        "session_id 不该是空串或极短串，实际 {created_id:?}"
+    );
+    // `target` 是随机值，但**范围确定**（猜数字默认 1..=100）且必须是整数。
+    // 只断言 `is_number()` 会放过小数、负数、越界值（review 指出）。
+    let target = rows[0]["state"]["target"]
+        .as_i64()
+        .expect("target 必须是整数");
+    assert!(
+        (1..=100).contains(&target),
+        "猜数字的默认 target 必须在 1..=100，实际 {target}"
+    );
     assert!(
         rows[0].get("target").is_none(),
         "框架不能把引擎的键提到顶层"

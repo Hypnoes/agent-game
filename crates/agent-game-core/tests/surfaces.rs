@@ -108,13 +108,25 @@ fn the_guess_number_public_view_carries_the_game_progress() {
     assert_eq!(guesses.len(), 1, "猜了一次就应当有一条记录");
     let entry = &guesses[0];
     assert_eq!(entry["number"], low, "记录里的数字应当就是刚猜的那个");
-    // 猜的是最小值，答案不可能更小，所以结果必然是 too_low 或 correct
-    let result = entry["result"].as_str().expect("result 应当是字符串");
-    assert!(
-        result == "too_low" || result == "correct",
-        "猜最小值的结果只能是 too_low 或 correct，实际: {result}"
+    // 猜的是最小值，按**实际 target** 推出唯一预期结果——
+    // 不是"两值之一"那种弱断言（review 指出）。
+    let expected = if engine.target() == low {
+        "correct"
+    } else {
+        "too_low"
+    };
+    assert_eq!(
+        entry["result"],
+        expected,
+        "猜 {low} 而 target 是 {}，结果必须恰好是 {expected}",
+        engine.target()
     );
-    assert!(entry["at_ms"].is_number(), "时间戳应当存在且是数字");
+    // 毫秒时间戳是非负整数，不是"任意 number"（负数/小数都不合法）
+    assert!(
+        entry["at_ms"].as_u64().is_some(),
+        "at_ms 必须是非负整数，实际: {}",
+        entry["at_ms"]
+    );
 }
 
 #[test]
@@ -153,6 +165,45 @@ fn the_liars_dice_public_view_carries_the_table() {
     assert_eq!(
         public["last_message"], "",
         "开局没有叫数时 last_message 应当是空串"
+    );
+}
+
+/// 有人叫数之后 `current_call` 必须是一个**完整对象**，`last_message` 与它一致。
+///
+/// review 指出：之前只断言了开局时 `current_call` 是 `null`，没有正向断言
+/// "叫数之后长什么样"。
+#[test]
+fn current_call_carries_the_live_bid_after_a_call() {
+    let (mut engine, tokens) = dice_engine();
+    engine.set_current_turn(0);
+    engine.set_dice(vec![vec![1, 2, 3], vec![4, 5, 6], vec![1, 1, 1]]);
+
+    let mut raw = serde_json::Map::new();
+    raw.insert("player_index".to_owned(), Value::from(0));
+    raw.insert("player_token".to_owned(), Value::String(tokens[0].clone()));
+    raw.insert("quantity".to_owned(), Value::from(2));
+    raw.insert("face".to_owned(), Value::from(3));
+    raw.insert("message".to_owned(), Value::String("加码".to_owned()));
+    engine.handle_action("bid", ActionParams::new(raw)).unwrap();
+
+    let public = engine.public_view();
+    let call = &public["current_call"];
+    assert!(call.is_object(), "叫数之后 current_call 必须是对象: {call}");
+    assert_eq!(call["player"], 0);
+    assert_eq!(call["player_name"], "P0");
+    assert_eq!(call["quantity"], 2);
+    assert_eq!(call["face"], 3);
+    // 注意：`current_call` 对象里**没有** `message` 字段——消息只出现在
+    // `last_message`（`current_call.map_or("", |c| c.message)`）。
+    // 我第一版在这里断言 `call["message"]`，测试红了：那不是"实现有 bug"，
+    // 是 JSON 契约本来就这样。
+    assert!(
+        call.get("message").is_none(),
+        "current_call 不含 message，消息在 last_message 里: {call}"
+    );
+    assert_eq!(
+        public["last_message"], "加码",
+        "last_message 必须等于当前叫数的消息"
     );
 }
 
@@ -222,12 +273,14 @@ fn every_history_entry_has_the_full_json_shape() {
         challenge_entry["face"], 0,
         "非叫数的 face 必须是 0（不是缺失）"
     );
-    assert!(
-        challenge_entry["message"]
-            .as_str()
-            .is_some_and(|m| m.contains("开")),
-        "开盅消息应当包含'开'，实际: {}",
-        challenge_entry["message"]
+    // 骰子已经用 `set_dice` 固定成 `[1,2,3] / [4,5,6] / [1,1,1]`。
+    // 面值 3 的计数**包含百搭的 1**（`count_face` 里 `die == face || (die == 1 && face != 1)`）：
+    // 一张 3 + 两张 1 = 5。所以文案可以精确断言（review 指出）。
+    //
+    // 我第一版按"只有一张 3"写成 1，测试立刻红了——百搭规则得先数清楚。
+    assert_eq!(
+        challenge_entry["message"], "开！(实际 5 个 3)",
+        "开盅消息里的实际数量要把百搭的 1 算进去"
     );
 
     // 每条都必须有全部五个键
@@ -333,8 +386,21 @@ fn the_admin_view_is_a_superset_of_the_public_view() {
             "公共字段 {key} 在 admin_view 里必须一致"
         );
     }
-    assert!(admin.get("all_dice").is_some());
-    assert!(public.get("all_dice").is_none());
+    // `all_dice` 不只要存在，内容必须与引擎里真实的骰子一致
+    // （review 指出之前只断言了 `is_some()`）。
+    let all_dice = admin["all_dice"].as_array().expect("all_dice 应当是数组");
+    assert_eq!(all_dice.len(), engine.players().len(), "每个玩家一组骰子");
+    for (index, player) in engine.players().iter().enumerate() {
+        assert_eq!(
+            all_dice[index],
+            json!(player.dice),
+            "第 {index} 名玩家的骰子必须与 admin_view 一致"
+        );
+    }
+    assert!(
+        public.get("all_dice").is_none(),
+        "public_view 不许有 all_dice"
+    );
 }
 
 // ═══════════════════════════════════════════
