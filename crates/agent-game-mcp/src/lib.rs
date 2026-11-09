@@ -701,9 +701,6 @@ mod tests {
         fn prompts(&self) -> &agent_game_server_core::PromptStore {
             &self.prompts
         }
-        fn setup_params(&self) -> CreateParams {
-            CreateParams::default()
-        }
         fn find_player_by_token(&self, token: &str) -> Option<usize> {
             (token == self.token).then_some(0)
         }

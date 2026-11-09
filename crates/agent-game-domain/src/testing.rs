@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use crate::game::{GameEngine, PlayerMode, PlayerView, TimeoutEvent};
 use agent_game_server_infra::error::EngineError;
-use agent_game_server_infra::params::{ActionParams, CreateParams};
+use agent_game_server_infra::params::ActionParams;
 use agent_game_server_infra::prompt::PromptStore;
 use agent_game_server_infra::signal::ChangeSignal;
 
@@ -141,9 +141,5 @@ impl GameEngine for DummyEngine {
 
     fn prompts(&self) -> &PromptStore {
         shared_prompts()
-    }
-
-    fn setup_params(&self) -> CreateParams {
-        CreateParams::default()
     }
 }

@@ -13,12 +13,13 @@
 //!
 //! 这份清单是被 review 逐轮补充的。缺哪个符号就补哪个，不要删。
 //!
-//! # 一个刻意的例外
+//! # 数量说明
 //!
-//! 重排前有 51 个公开符号，这里探了 50 个。漏掉的是
-//! `games::state_machine::Transitions`——它是**死代码**（整个 workspace 零调用者，
-//! 只有自己的单元测试引用），已排进后续 issue 删除。给它加探针等于把一个即将
-//! 消失的符号固化成契约。删掉那个模块时，这里的数量说明会一起更新。
+//! 重排前有 51 个公开符号，这里探 50 个。差的那一个是
+//! `games::state_machine::Transitions`——它整个 workspace 零调用者，是死代码，
+//! 已在 006（#8）里删除。**它不再是"刻意例外"，是已经不存在了。**
+//! 同样，`GameEngine::setup_params()` 也在 006 里移除（生产路径零调用，
+//! `Session.setup` 才是大厅匹配真正消费的那份配置）。
 
 #![allow(unused_imports, clippy::unwrap_used, clippy::expect_used)]
 

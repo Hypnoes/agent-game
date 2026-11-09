@@ -217,16 +217,50 @@ fn with_prompt_lock<R>(f: impl FnOnce() -> R) -> R {
     f()
 }
 
+/// 借用引擎的共享提示词仓库。
+///
+/// **两个引擎各有一份 `OnceLock`**（`liars_dice.rs` 与 `guess_number.rs` 各自
+/// 一个 `static PROMPTS`）。`apply_prompt_dir` 会给**每一个**注册引擎的 store
+/// 设目录，所以清理也必须两份都清——只清 `liars_dice` 那份的话，
+/// `guess_number` 那份会带着上一个用例的临时目录进入下一个用例，
+/// 表现为"偶尔读到不该存在的磁盘提示词"。
 fn with_shared_prompt_store<R>(f: impl FnOnce(&PromptStore) -> R) -> R {
     use agent_game_server_core::GameEngine as _;
-    use agent_game_server_core::games::LiarsDiceEngine;
+    use agent_game_server_core::games::{GuessNumberEngine, LiarsDiceEngine};
 
-    let engine = LiarsDiceEngine::new(
+    let liars = LiarsDiceEngine::new(
         &agent_game_server_core::CreateParams::default(),
         &Config::default(),
     )
     .unwrap();
-    f(engine.prompts())
+    let guess = GuessNumberEngine::new(
+        &agent_game_server_core::CreateParams::default(),
+        &Config::default(),
+    )
+    .unwrap();
+
+    // 用 RAII guard 而不是"闭包跑完再复位"：闭包 panic 时那行复位不会执行，
+    // 残留的临时目录会让**后续用例**次生失败，把一次断言失败变成一片红。
+    let _cleanup = PromptStoreReset {
+        stores: vec![liars.prompts(), guess.prompts()],
+    };
+
+    f(liars.prompts())
+}
+
+/// 离开作用域时把每个 `PromptStore` 的 `dir` 复位。
+///
+/// 基于 `Drop`，所以闭包 panic 展开时同样会执行。
+struct PromptStoreReset<'a> {
+    stores: Vec<&'a PromptStore>,
+}
+
+impl Drop for PromptStoreReset<'_> {
+    fn drop(&mut self) {
+        for store in &self.stores {
+            store.set_dir(None);
+        }
+    }
 }
 
 // ═══════════════════════════════════════════
@@ -235,11 +269,20 @@ fn with_shared_prompt_store<R>(f: impl FnOnce(&PromptStore) -> R) -> R {
 
 #[test]
 fn reloading_reports_every_registered_engine() {
-    let state = AppState::with_defaults("tok".to_owned());
-    let reloaded = reload_all_prompts(&state);
-    assert_eq!(reloaded.len(), 2);
-    assert!(reloaded.contains(&"guess_number"));
-    assert!(reloaded.contains(&"liars_dice"));
+    // 必须持锁：`reload_all_prompts` 会遍历注册表、对每个引擎的共享
+    // `PromptStore` 调 `reload()`。而 `with_prompt_lock` 那三个用例正在
+    // `set_dir(Some/None)`。两者并发时 `reload()` 可能读到某个临时目录
+    // 刚被清掉、或另一份引擎的 store 已指向别处的中间状态。
+    //
+    // 这条曾经不持锁，CI 上偶发失败：同一个 commit 连跑两次，一次 success
+    // 一次 failure（本地多核跑 5 次都过，runner 只有 2 核，调度不同就翻面）。
+    with_prompt_lock(|| {
+        let state = AppState::with_defaults("tok".to_owned());
+        let reloaded = reload_all_prompts(&state);
+        assert_eq!(reloaded.len(), 2);
+        assert!(reloaded.contains(&"guess_number"));
+        assert!(reloaded.contains(&"liars_dice"));
+    });
 }
 
 // ═══════════════════════════════════════════

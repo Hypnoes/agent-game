@@ -245,9 +245,6 @@ impl GameEngine for Bare {
     fn prompts(&self) -> &PromptStore {
         &self.prompts
     }
-    fn setup_params(&self) -> CreateParams {
-        CreateParams::default()
-    }
 }
 
 #[test]

@@ -329,15 +329,40 @@ error: cyclic package dependency: package `agent-game-server-core` depends on it
 - `version_is_still_exported`——`VERSION` 不在任何模块里，容易被漏
 - `top_level_reexports_still_resolve`——顶层 `pub use` 的名字逐个点名
 
-对照重排前的 51 个公开符号，探了 50 个。唯一例外是
-`games::state_machine::Transitions`：它整个 workspace 零调用者、只有自己的单元测试
-引用，是死代码，已排进 006 删除。给它加探针等于把即将消失的符号固化成契约。
+对照重排前的 51 个公开符号，探 50 个。差的那个是
+`games::state_machine::Transitions`——死代码，已在 **006（#8）** 里删除。
+同一轮还删了 `GameEngine::setup_params()`：生产路径零调用，`Session.setup`
+才是大厅匹配真正消费的那份配置。
 
 它不测行为，测的是"路径还在"。删掉 `manager` 兼容模块后，这个文件**编译失败**，
 而不是行为断言失败。
 
 **新增规则时的自检**：删掉 `lib.rs` 里任意一个兼容模块，`cargo test -p
 agent-game-server-core --test api_paths` 必须编译失败。
+
+---
+
+## 18. 删代码前先证明它真没人用
+
+006（#8）删掉了两处「看起来有用、实际零调用」的代码，方法值得复用。
+
+**证据不能是"grep 没搜到"**，要三层：
+
+1. **调用点**：`grep -rnE` 搜符号名。注意 `-E`——POSIX `grep` 默认 BRE，
+   `"A|B"` 里的 `|` 是普通字符，返回空，看起来像"什么都没找到"（006 的规划
+   第一版就踩了这个坑）
+2. **`dead_code` 警告**：删掉唯一的读者之后，`cargo build` 会报
+   `field 'setup' is never read`。这条比 grep 硬——它是编译器说的
+3. **删除后的编译**：删 trait 方法会让所有 impl 少一个方法。workspace 内如果
+   真有人用，编译期就红
+
+`setup_params()` 的案例说明第 2 层为什么必要：删掉它之后，编译器立刻指出
+`LiarsDiceEngine::setup` 与 `GuessNumberEngine::setup` 两个字段从未被读取。
+**那个方法就是它们唯一的读者**——只靠 grep 看不出这层关系，会留下两个
+僵尸字段。
+
+**新增规则时的自检**：删任何 `pub` 项前，先跑一次 `cargo build` 看 dead_code，
+确认没有"被它养活的字段 / 函数"还留着。
 
 ---
 

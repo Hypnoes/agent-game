@@ -86,12 +86,27 @@ fn the_lobby_timeout_boundary_is_millisecond_exact() {
 #[test]
 fn the_guess_idle_timeout_boundary_is_millisecond_exact() {
     let mut engine = GuessNumberEngine::new(&CreateParams::default(), &Config::default()).unwrap();
+
+    // 判据是 `now - last_action > IDLE_TIMEOUT`，而 `last_action` 是**构造时刻**
+    // （`guess_number.rs` 的 `last_action: now`），不是这里调 `Instant::now()` 的
+    // 时刻。两者相差若干微秒——构造、分配、可能的一次调度。
+    //
+    // 所以不能用 `Instant::now() + 600s - 1ms`：相对 `last_action` 它已经超过
+    // 600s，断言"不该超时"必然失败。这个用例在变异测试并行编译的高负载下稳定
+    // 复现（本地空载时偶尔通过，CI 上必红）。
+    //
+    // 正确做法是从**引擎自己的时间基准**出发，边界才精确。
     let budget = Duration::from_secs(600);
+    let base = engine.last_action();
 
-    let just_before = Instant::now() + budget.saturating_sub(Duration::from_millis(1));
-    assert_eq!(engine.check_timeout(just_before).unwrap(), None);
+    let just_before = base + budget.saturating_sub(Duration::from_millis(1));
+    assert_eq!(
+        engine.check_timeout(just_before).unwrap(),
+        None,
+        "差 1 毫秒不算超时"
+    );
 
-    let just_after = Instant::now() + budget + Duration::from_millis(2);
+    let just_after = base + budget + Duration::from_millis(2);
     assert!(engine.check_timeout(just_after).unwrap().is_some());
 }
 

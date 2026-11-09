@@ -13,9 +13,35 @@ use std::time::Instant;
 
 use agent_game_server_core::games::LiarsDiceEngine;
 use agent_game_server_core::{
-    ActionParams, Config, CreateParams, EngineError, GameEngine, PlayerMode, PlayerView,
+    ActionParams, Config, CreateParams, EngineError, GameEngine, GameManager, GameMeta, PlayerMode,
+    PlayerView, Registry,
 };
 use serde_json::Value;
+
+/// 一个注册了两个内置游戏的 manager。
+///
+/// 这批用例要验 `Session.setup`——那是大厅匹配真正消费的那份配置，
+/// 只有经由 `GameManager::create()` 才会产生 `Session`。
+fn manager() -> GameManager {
+    let mut registry = Registry::new();
+    registry.register(GameMeta::new(
+        "liars_dice",
+        PlayerMode::Multi,
+        |params, config| Ok(Box::new(LiarsDiceEngine::new(params, config)?) as _),
+    ));
+    registry.register(GameMeta::new(
+        "guess_number",
+        PlayerMode::Single,
+        |params, config| {
+            Ok(
+                Box::new(agent_game_server_core::games::GuessNumberEngine::new(
+                    params, config,
+                )?) as _,
+            )
+        },
+    ));
+    GameManager::new(registry, Config::default())
+}
 
 fn started(player_count: usize, dice_per_player: usize) -> (LiarsDiceEngine, Vec<String>) {
     let mut raw = serde_json::Map::new();
@@ -257,30 +283,47 @@ fn the_signal_is_the_engines_own() {
     assert!(sub.has_changed(), "超时通知必须发到同一份信号上");
 }
 
-#[test]
-fn setup_params_keep_the_creation_configuration() {
+/// 创建配置必须原样留在 `Session.setup` 里。
+///
+/// 这曾经测的是 `GameEngine::setup_params()`，那个方法在生产路径上零调用——
+/// `Session` 已经持有同一份 `CreateParams`，大厅匹配用的就是它
+/// （`lobby.rs` 的 `compatible(&session.setup, &setup)`）。方法删掉后，
+/// 断言改为直接验那份真正被消费的数据。
+#[tokio::test]
+async fn the_session_keeps_the_creation_configuration() {
     // 变异成 `Default::default()` 会让"同配置才复用桌子"的匹配失效：
     // 所有等待中的桌子看起来参数都一样。
     let mut raw = serde_json::Map::new();
     raw.insert("player_count".to_owned(), Value::from(6));
     raw.insert("dice_per_player".to_owned(), Value::from(2));
-    let engine = LiarsDiceEngine::new(&CreateParams::new(raw), &Config::default()).unwrap();
 
-    let params = engine.setup_params();
-    assert_eq!(params.get("player_count"), Some(&Value::from(6)));
-    assert_eq!(params.get("dice_per_player"), Some(&Value::from(2)));
+    let manager = manager();
+    let session = manager
+        .create("liars_dice", CreateParams::new(raw), Instant::now())
+        .await
+        .unwrap();
+
+    assert_eq!(session.setup.get("player_count"), Some(&Value::from(6)));
+    assert_eq!(session.setup.get("dice_per_player"), Some(&Value::from(2)));
 }
 
-#[test]
-fn setup_params_never_include_the_player_token() {
+#[tokio::test]
+async fn the_session_setup_never_includes_the_player_token() {
     // token 不是配置项：把它算进匹配键会让"两个人等同一张桌"永远匹配不上。
     let mut raw = serde_json::Map::new();
     raw.insert("player_count".to_owned(), Value::from(2));
     raw.insert("player_token".to_owned(), Value::from("secret"));
-    let engine = LiarsDiceEngine::new(&CreateParams::new(raw), &Config::default()).unwrap();
 
-    let params = engine.setup_params();
-    assert!(params.get("player_token").is_none(), "token 不能进配置指纹");
+    let manager = manager();
+    let session = manager
+        .create("liars_dice", CreateParams::new(raw), Instant::now())
+        .await
+        .unwrap();
+
+    assert!(
+        session.setup.get("player_token").is_none(),
+        "token 不能进配置指纹"
+    );
 }
 
 // ═══════════════════════════════════════════
@@ -395,15 +438,16 @@ mod guess_number {
         assert_eq!(engine.find_player_by_token("x"), None);
     }
 
-    #[test]
-    fn the_setup_params_carry_the_configuration() {
+    #[tokio::test]
+    async fn the_session_carries_the_configuration() {
         let mut raw = serde_json::Map::new();
         raw.insert("max_attempts".to_owned(), Value::from(3));
-        let engine = GuessNumberEngine::new(&CreateParams::new(raw), &Config::default()).unwrap();
-        assert_eq!(
-            engine.setup_params().get("max_attempts"),
-            Some(&Value::from(3))
-        );
+        let manager = manager();
+        let session = manager
+            .create("guess_number", CreateParams::new(raw), Instant::now())
+            .await
+            .unwrap();
+        assert_eq!(session.setup.get("max_attempts"), Some(&Value::from(3)));
     }
 }
 
