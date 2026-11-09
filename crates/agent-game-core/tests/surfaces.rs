@@ -136,6 +136,24 @@ fn the_liars_dice_public_view_carries_the_table() {
         engine.players().len()
     );
     assert!(public["call_history"].is_array());
+
+    // `current_call` 与 `last_message` 是 Agent 读的两个关键字段：
+    // 前者是"现在该加多少"，后者是"上一手说了什么"。开局无叫数时
+    // `current_call` 必须是 null（不是缺失、不是空对象）。
+    assert!(
+        public.get("current_call").is_some(),
+        "current_call 字段必须存在，实际字段: {:?}",
+        public.as_object().map(|o| o.keys().collect::<Vec<_>>())
+    );
+    assert!(
+        public["current_call"].is_null(),
+        "开局还没有人叫数，current_call 必须是 null，实际: {}",
+        public["current_call"]
+    );
+    assert_eq!(
+        public["last_message"], "",
+        "开局没有叫数时 last_message 应当是空串"
+    );
 }
 
 /// `call_history` 的 JSON 形状是**对外契约**：admin 页面与 Agent prompt 都读它。
@@ -243,7 +261,10 @@ fn a_timeout_entry_serialises_like_any_other_non_bid() {
     raw.insert("face".to_owned(), Value::from(2));
     engine.handle_action("bid", ActionParams::new(raw)).unwrap();
 
-    // 把当前回合的玩家逼到超时
+    // 超时的是"当前回合"那个玩家——先把他是谁记下来，
+    // 才能断言历史记录真的指向他（review 指出之前只断言了"是数字"）。
+    let timed_out = engine.current_turn();
+    let timed_out_name = engine.players()[timed_out].name.clone();
     engine
         .check_timeout(Instant::now() + engine.turn_timeout() * 2)
         .unwrap();
@@ -261,19 +282,34 @@ fn a_timeout_entry_serialises_like_any_other_non_bid() {
         })
         .expect("应当有一条超时记录");
 
+    // 精确断言：指向真正超时的那个人，不是"某个数字/某个字符串"
+    assert_eq!(
+        timeout_entry["player"],
+        serde_json::json!(timed_out),
+        "超时记录必须指向真正超时的玩家"
+    );
+    assert_eq!(
+        timeout_entry["player_name"],
+        serde_json::json!(timed_out_name),
+        "超时记录的玩家名必须是他"
+    );
+    // 消息是固定文案（`check_timeout` 里写死的），值得钉住
+    assert_eq!(
+        timeout_entry["message"], "超时判负（本轮作废）",
+        "超时消息是固定文案"
+    );
+    // 五个字段一个不少，且非叫数的两个数值字段是 0
+    for key in ["player", "player_name", "quantity", "face", "message"] {
+        assert!(
+            timeout_entry.get(key).is_some(),
+            "超时记录缺字段 {key}: {timeout_entry}"
+        );
+    }
     assert_eq!(
         timeout_entry["quantity"], 0,
         "超时的 quantity 必须是 0（不是缺失）"
     );
     assert_eq!(timeout_entry["face"], 0, "超时的 face 必须是 0（不是缺失）");
-    assert!(
-        timeout_entry["player"].is_number(),
-        "超时记录也要带玩家索引"
-    );
-    assert!(
-        timeout_entry["player_name"].is_string(),
-        "超时记录也要带玩家名"
-    );
 }
 
 #[test]
@@ -283,8 +319,19 @@ fn the_admin_view_is_a_superset_of_the_public_view() {
     let public = engine.public_view();
     let admin = engine.admin_view();
 
-    for key in ["phase", "players", "alive", "dice_per_player"] {
-        assert_eq!(public[key], admin[key], "字段 {key} 应一致");
+    // 逐个比较 `public_view` 的**全部**键，而不是手挑四个。
+    // 手挑的话，新增一个公共字段后这条断言不会红——它压根不看新字段。
+    let public_object = public.as_object().expect("public_view 应当是对象");
+    assert!(
+        public_object.len() >= 6,
+        "public_view 的字段数不该少（实际 {}）",
+        public_object.len()
+    );
+    for (key, value) in public_object {
+        assert_eq!(
+            &admin[key], value,
+            "公共字段 {key} 在 admin_view 里必须一致"
+        );
     }
     assert!(admin.get("all_dice").is_some());
     assert!(public.get("all_dice").is_none());
