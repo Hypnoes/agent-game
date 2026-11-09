@@ -280,6 +280,11 @@ impl LiarsDiceEngine {
     /// 生产路径永远不调它，所以标 `#[doc(hidden)]` 而不是藏成私有。
     #[doc(hidden)]
     pub fn set_dice(&mut self, faces: Vec<Vec<i64>>) {
+        // 只允许在未结束时摆骰子：`finished` 之后 `winner` / `loser` 已经定下，
+        // 再改骰子会让"谁是赢家"与"谁还活着"对不上（review 指出）。
+        if self.is_finished() {
+            return;
+        }
         if faces.len() == self.players.len() {
             for (player, dice) in self.players.iter_mut().zip(faces) {
                 player.alive = Self::alive_after_dealing(self.phase, &dice);
@@ -310,6 +315,10 @@ impl LiarsDiceEngine {
     /// **这是 `alive` 唯一的写入口之一**——它是私有字段，外部改不动。
     #[doc(hidden)]
     pub fn set_player_dice(&mut self, player_index: usize, dice: Vec<i64>) {
+        // 同 `set_dice`：对局已结束后不许再摆
+        if self.is_finished() {
+            return;
+        }
         let phase = self.phase;
         // 先算再借用 `players`，避免同一个表达式里既读 self 又可变借用
         let alive = Self::alive_after_dealing(phase, &dice);
@@ -1928,6 +1937,50 @@ mod tests {
             "开局后摆空骰 = 出局（单人入口）"
         );
         assert!(single.players()[0].is_alive(), "没被动过的玩家仍在场");
+
+        // 单人入口：非空骰 -> 复活，且骰子内容真的写进去了
+        single.set_player_dice(1, vec![5, 6]);
+        assert!(
+            single.players()[1].is_alive(),
+            "摆回非空骰应当复活（与全场入口规则一致）"
+        );
+        assert_eq!(single.players()[1].dice, vec![5, 6], "骰子内容要真的写进去");
+    }
+
+    /// 对局结束后不许再摆骰子。
+    ///
+    /// 结束后 `winner` / `loser` 已经定下。若还允许改骰子，会出现
+    /// "赢家已定但赢家没骰子"或"某人还没出局但 winner 已经是他"这类
+    /// 自相矛盾的状态。两个入口都要挡住。
+    #[test]
+    fn dice_setters_refuse_after_the_game_finished() {
+        let (mut engine, tokens) = started(2, 1);
+        engine.set_dice(vec![vec![1], vec![2]]);
+        engine.set_current_turn(0);
+        bid(&mut engine, 0, &tokens[0], 1, 3).unwrap();
+        engine
+            .handle_action(
+                "challenge",
+                ActionParams::new({
+                    let mut raw = serde_json::Map::new();
+                    raw.insert("player_index".to_owned(), Value::from(1));
+                    raw.insert("player_token".to_owned(), Value::from(tokens[1].clone()));
+                    raw
+                }),
+            )
+            .unwrap();
+        assert_eq!(engine.phase(), "finished", "2 人局开盅后应当结束");
+
+        let before: Vec<Vec<i64>> = engine.players().iter().map(|p| p.dice.clone()).collect();
+        let winner = engine.winner();
+
+        // 两个入口都该被挡住
+        engine.set_dice(vec![vec![9, 9], vec![9, 9]]);
+        engine.set_player_dice(0, vec![9, 9]);
+
+        let after: Vec<Vec<i64>> = engine.players().iter().map(|p| p.dice.clone()).collect();
+        assert_eq!(after, before, "结束后摆骰子必须被忽略");
+        assert_eq!(engine.winner(), winner, "winner 不该受影响");
     }
 
     #[test]
