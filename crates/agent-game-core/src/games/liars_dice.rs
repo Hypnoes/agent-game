@@ -282,19 +282,39 @@ impl LiarsDiceEngine {
     pub fn set_dice(&mut self, faces: Vec<Vec<i64>>) {
         if faces.len() == self.players.len() {
             for (player, dice) in self.players.iter_mut().zip(faces) {
+                player.alive = Self::alive_after_dealing(self.phase, &dice);
                 player.dice = dice;
             }
         }
     }
 
+    /// 摆完骰子之后 `alive` 该是什么。
+    ///
+    /// 关键区分：**零骰不等于出局**。
+    ///
+    /// - 开局前（`waiting`）：骰子必然是空的，那是"还没发骰"，玩家仍在场
+    /// - 开局后：骰子掉光才是出局
+    ///
+    /// `set_dice` / `set_player_dice` 都走这一个判断，语义统一。改前
+    /// `set_dice` 只改骰子、`set_player_dice` 顺带改 `alive`，两个测试入口
+    /// 的语义不一致（review 指出）。
+    fn alive_after_dealing(phase: &str, dice: &[i64]) -> bool {
+        phase == "waiting" || !dice.is_empty()
+    }
+
     /// 直接摆某个玩家的骰子。同样只给测试用。
     ///
-    /// 出局与否跟随骰子：摆成空就自动标成出局，摆成非空就复活。
+    /// `alive` 与全场版本的 [`Self::set_dice`] 走同一个判断
+    /// （[`Self::alive_after_dealing`]）：开局前空骰不算出局，开局后骰子掉光才出局。
+    ///
     /// **这是 `alive` 唯一的写入口之一**——它是私有字段，外部改不动。
     #[doc(hidden)]
     pub fn set_player_dice(&mut self, player_index: usize, dice: Vec<i64>) {
+        let phase = self.phase;
+        // 先算再借用 `players`，避免同一个表达式里既读 self 又可变借用
+        let alive = Self::alive_after_dealing(phase, &dice);
         if let Some(player) = self.players.get_mut(player_index) {
-            player.alive = !dice.is_empty();
+            player.alive = alive;
             player.dice = dice;
         }
     }
@@ -1767,5 +1787,155 @@ mod tests {
             .handle_action("state", ActionParams::new(raw))
             .unwrap();
         assert_eq!(view.private["your_index"], 1);
+    }
+
+    // ═══════════════════════════════════════════
+    // HistoryEvent 的访问器
+    // ═══════════════════════════════════════════
+
+    /// 三个变体各自报出自己的玩家索引。
+    ///
+    /// 请守住 `player_idx()` 的 match——把它简化成只处理 `Bid`、或者返回常量，
+    /// 都会让"历史记录指向谁"这件事出错，而公开视图与提示词都靠它。
+    #[test]
+    fn every_history_variant_reports_its_player() {
+        let bid = HistoryEvent::Bid(Bid::new(2, 3, 4, "x".to_owned()));
+        let challenge = HistoryEvent::Challenge {
+            player_idx: 1,
+            actual: 5,
+            face: 6,
+            message: "开".to_owned(),
+        };
+        let timeout = HistoryEvent::TurnTimeout {
+            player_idx: 0,
+            message: "超时".to_owned(),
+        };
+
+        assert_eq!(bid.player_idx(), 2);
+        assert_eq!(challenge.player_idx(), 1);
+        assert_eq!(timeout.player_idx(), 0);
+    }
+
+    /// 只有 `Bid` 有 quantity/face；另外两个变体必须是 `None`。
+    ///
+    /// 请守住"枚举相对于哨兵值"这件事：改前用 `quantity == 0` 表示非叫数，
+    /// 于是"非叫数却有数量"这种状态是写不出来的——现在由类型保证。
+    #[test]
+    fn only_bids_carry_quantity_and_face() {
+        let bid = HistoryEvent::Bid(Bid::new(0, 3, 4, "x".to_owned()));
+        assert_eq!(bid.quantity_and_face(), Some((3, 4)));
+        assert!(bid.as_bid().is_some());
+
+        let challenge = HistoryEvent::Challenge {
+            player_idx: 1,
+            actual: 5,
+            face: 6,
+            message: "开".to_owned(),
+        };
+        assert_eq!(challenge.quantity_and_face(), None);
+        assert!(challenge.as_bid().is_none());
+
+        let timeout = HistoryEvent::TurnTimeout {
+            player_idx: 0,
+            message: "超时".to_owned(),
+        };
+        assert_eq!(timeout.quantity_and_face(), None);
+        assert!(timeout.as_bid().is_none());
+    }
+
+    /// 每个变体的 `message()` 都要能取到自己的文字。
+    #[test]
+    fn every_history_variant_reports_its_message() {
+        assert_eq!(
+            HistoryEvent::Bid(Bid::new(0, 1, 2, "叫".to_owned())).message(),
+            "叫"
+        );
+        assert_eq!(
+            HistoryEvent::Challenge {
+                player_idx: 0,
+                actual: 1,
+                face: 2,
+                message: "开".to_owned(),
+            }
+            .message(),
+            "开"
+        );
+        assert_eq!(
+            HistoryEvent::TurnTimeout {
+                player_idx: 0,
+                message: "超时".to_owned(),
+            }
+            .message(),
+            "超时"
+        );
+    }
+
+    // ═══════════════════════════════════════════
+    // player_name：收掉 5 处 map_or("?")
+    // ═══════════════════════════════════════════
+
+    // ═══════════════════════════════════════════
+    // 两个摆骰子入口的语义必须一致
+    // ═══════════════════════════════════════════
+
+    /// **开局前的零骰不是出局**。
+    ///
+    /// 这是 `alive` 与 `dice` 双真相最容易踩的地方：`Player::new` 造出来是
+    /// `dice: []` + `alive: true`（还没发骰），如果把 `alive` 改写成
+    /// `!dice.is_empty()`，新玩家会被判出局，`start_game` 跳过所有人。
+    #[test]
+    fn empty_dice_before_start_is_not_elimination() {
+        let mut engine =
+            LiarsDiceEngine::new(&CreateParams::default(), &Config::default()).unwrap();
+        let mut raw = serde_json::Map::new();
+        raw.insert("player_name".to_owned(), Value::from("Solo"));
+        engine
+            .handle_action("join", ActionParams::new(raw))
+            .unwrap();
+
+        // 大厅里骰子是空的，但玩家在场
+        assert_eq!(engine.players()[0].dice, Vec::<i64>::new());
+        assert!(
+            engine.players()[0].is_alive(),
+            "开局前的零骰是\"还没发骰\"，不是出局"
+        );
+
+        // 摆一个空骰也仍然是"在场"
+        engine.set_player_dice(0, Vec::new());
+        assert!(
+            engine.players()[0].is_alive(),
+            "set_player_dice 在开局前摆空骰不该把人标出局"
+        );
+    }
+
+    /// 开局后零骰才是出局，且两个入口给出同样的判断。
+    #[test]
+    fn both_dice_setters_agree_after_start() {
+        // 全场入口
+        let (mut whole, _tokens) = started(3, 2);
+        whole.set_dice(vec![vec![1, 2], Vec::new(), vec![3, 4]]);
+        assert!(whole.players()[0].is_alive());
+        assert!(
+            !whole.players()[1].is_alive(),
+            "开局后摆空骰 = 出局（全场入口）"
+        );
+
+        // 单人入口
+        let (mut single, _tokens) = started(3, 2);
+        single.set_player_dice(1, Vec::new());
+        assert!(
+            !single.players()[1].is_alive(),
+            "开局后摆空骰 = 出局（单人入口）"
+        );
+        assert!(single.players()[0].is_alive(), "没被动过的玩家仍在场");
+    }
+
+    #[test]
+    fn player_name_returns_the_real_name() {
+        let (engine, _tokens) = started(2, 3);
+        assert_eq!(engine.player_name(0), engine.players()[0].name);
+        assert_eq!(engine.player_name(1), engine.players()[1].name);
+        // 越界只是末日兜底，不是预期状态
+        assert_eq!(engine.player_name(99), "?");
     }
 }
