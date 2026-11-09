@@ -117,6 +117,91 @@ fn the_liars_dice_public_view_carries_the_table() {
     assert!(public["call_history"].is_array());
 }
 
+/// `call_history` 的 JSON 形状是**对外契约**：admin 页面与 Agent prompt 都读它。
+///
+/// 变的是内部模型（`Call` 拆成 `Bid` + `HistoryEvent`），不变的必须是这个形状：
+/// 每条都是 `{player, player_name, quantity, face, message}`，非叫数
+/// （开盅、超时）的 `quantity` 与 `face` 都是 0。
+///
+/// 这条用例是 review 督促补的：之前只断言 `is_array()`，等于什么都没测——
+/// 改坏了字段名、或者非叫数不输出 `quantity: 0`，套件都不会红。
+/// `call_history` 的 JSON 形状是**对外契约**：admin 页面与 Agent prompt 都读它。
+///
+/// 变的是内部模型（`Call` 拆成 `Bid` + `HistoryEvent`），不变的必须是这个形状：
+/// 每条都是 `{player, player_name, quantity, face, message}`，非叫数
+/// （开盅、超时）的 `quantity` 与 `face` 都是 0。
+///
+/// 这条用例是 review 督促补的：之前只断言 `is_array()`，等于什么都没测——
+/// 改坏了字段名、或者非叫数不输出 `quantity: 0`，套件都不会红。
+#[test]
+fn every_history_entry_has_the_full_json_shape() {
+    let (mut engine, tokens) = dice_engine();
+    // 先手是随机的，固定成 0 才能断言"第一条是 P0 叫的"
+    engine.set_current_turn(0);
+    engine.set_dice(vec![vec![1, 2, 3], vec![4, 5, 6], vec![1, 1, 1]]);
+
+    // 叫数
+    let mut raw = serde_json::Map::new();
+    raw.insert("player_index".to_owned(), Value::from(0));
+    raw.insert("player_token".to_owned(), Value::String(tokens[0].clone()));
+    raw.insert("quantity".to_owned(), Value::from(2));
+    raw.insert("face".to_owned(), Value::from(3));
+    raw.insert("message".to_owned(), Value::String("叫一手".to_owned()));
+    engine.handle_action("bid", ActionParams::new(raw)).unwrap();
+
+    // 开盅
+    let mut raw = serde_json::Map::new();
+    raw.insert("player_index".to_owned(), Value::from(1));
+    raw.insert("player_token".to_owned(), Value::String(tokens[1].clone()));
+    engine
+        .handle_action("challenge", ActionParams::new(raw))
+        .unwrap();
+
+    let history = engine.public_view()["call_history"]
+        .as_array()
+        .expect("call_history 应当是数组")
+        .clone();
+    assert_eq!(history.len(), 2, "应当有一条叫数 + 一条开盅");
+
+    // 叫数
+    let bid_entry = &history[0];
+    assert_eq!(bid_entry["player"], 0);
+    assert_eq!(bid_entry["player_name"], "P0");
+    assert_eq!(bid_entry["quantity"], 2);
+    assert_eq!(bid_entry["face"], 3);
+    assert_eq!(bid_entry["message"], "叫一手");
+
+    // 开盅：quantity 与 face 都是 0，但字段**必须存在**
+    let challenge_entry = &history[1];
+    assert_eq!(challenge_entry["player"], 1);
+    assert_eq!(challenge_entry["player_name"], "P1");
+    assert_eq!(
+        challenge_entry["quantity"], 0,
+        "非叫数的 quantity 必须是 0（不是缺失）"
+    );
+    assert_eq!(
+        challenge_entry["face"], 0,
+        "非叫数的 face 必须是 0（不是缺失）"
+    );
+    assert!(
+        challenge_entry["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("开")),
+        "开盅消息应当包含'开'，实际: {}",
+        challenge_entry["message"]
+    );
+
+    // 每条都必须有全部五个键
+    for (index, entry) in history.iter().enumerate() {
+        for key in ["player", "player_name", "quantity", "face", "message"] {
+            assert!(
+                entry.get(key).is_some(),
+                "第 {index} 条缺字段 {key}: {entry}"
+            );
+        }
+    }
+}
+
 #[test]
 fn the_admin_view_is_a_superset_of_the_public_view() {
     // admin 要多出秘密字段，而不是给一份完全不同的东西

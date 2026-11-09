@@ -1928,6 +1928,14 @@ mod tests {
             !whole.players()[1].is_alive(),
             "开局后摆空骰 = 出局（全场入口）"
         );
+        // 光断言 is_alive 不够：忘掉 `player.dice = dice` 这行时它仍是 false
+        // （因为构造时 dice 本来就空），测试会漏掉"骰子没被真正写进去"。
+        assert_eq!(
+            whole.players()[1].dice,
+            Vec::<i64>::new(),
+            "骰子内容要真的被写成空"
+        );
+        assert_eq!(whole.players()[0].dice, vec![1, 2], "别把别人的骰子改了");
 
         // 单人入口
         let (mut single, _tokens) = started(3, 2);
@@ -1935,6 +1943,11 @@ mod tests {
         assert!(
             !single.players()[1].is_alive(),
             "开局后摆空骰 = 出局（单人入口）"
+        );
+        assert_eq!(
+            single.players()[1].dice,
+            Vec::<i64>::new(),
+            "骰子内容要真的被写成空"
         );
         assert!(single.players()[0].is_alive(), "没被动过的玩家仍在场");
 
