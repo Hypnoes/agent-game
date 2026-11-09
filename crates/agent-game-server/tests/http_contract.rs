@@ -480,7 +480,9 @@ async fn the_admin_list_uses_the_envelope() {
     let rows = body["games"].as_array().unwrap();
     assert_eq!(rows.len(), 1);
     // 信封：框架字段在顶层，引擎状态在 state 里
-    // `session_id`：与创建时那个精确比较，不是"是字符串"就完事
+    // TODO(#16)：`session_id` 应与 `manager.create()` 返回的精确比较，
+    // 不是"长度 ≥ 8"；`target` 应断言在 `1..=100` 而不是只 `is_number()`。
+    // 这两项是通用契约问题，不属于 #10 的建模范围。
     let created_id = rows[0]["session_id"]
         .as_str()
         .expect("session_id 必须是字符串");
