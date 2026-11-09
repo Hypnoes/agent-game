@@ -97,7 +97,11 @@ jobs:
           cargo build --release --workspace
           found=0
           for rlib in target/release/libagent_game*.rlib; do
-            if strings "$rlib" | grep -qE 'DummyEngine|admin-only'; then
+            # **不要用 `strings "$rlib" | grep -q ...`**：`grep -q` 命中即退出，
+            # `strings` 会收到 SIGPIPE，在 `pipefail` 下整条管道返回非零，
+            # `if` 把它当成"没找到"——恰恰在**有泄露**的时候漏报。
+            # 改成把 grep 输出重定向掉、用退出码判断，管道就不会提前关闭。
+            if strings "$rlib" | grep -E 'DummyEngine|admin-only' > /dev/null; then
               echo "::error::测试替身泄漏进发布产物: $rlib"
               found=1
             fi
