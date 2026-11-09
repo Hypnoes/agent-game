@@ -11,30 +11,31 @@
 //! 实测 `libagent_game_server_domain.rlib` 里能串扫到 `DummyEngine` 与
 //! `admin-only`。
 //!
-//! # 为什么用 `cargo metadata` 而不是扫 TOML 文本
+//! # 为什么解析 `cargo metadata` 而不是扫 TOML 文本
 //!
 //! 第一版扫 `Cargo.toml` 的 `[dependencies]` 段找字面
-//! `features = ["testing"]`。review 指出它漏掉三类合法写法：
+//! `features = ["testing"]`。review 逐轮指出它漏掉：
 //!
 //! - target-specific dependencies（`[target.'cfg(...)'.dependencies]`）
 //! - 在 workspace 依赖上启用的 feature
-//! - 其他 TOML 排版（换行、行内表、引号风格）
+//! - 其他 TOML 排版
+//! - `[build-dependencies]`（`kind == "build"` 也是生产）
+//! - 重命名依赖（`package = "..."`）
+//! - `default-features = false`（此时 default 不生效，不该误报）
+//! - 嵌套的 feature 链（`default = ["standard"]`、`standard = ["testing"]`）
 //!
-//! 改成解析 `cargo metadata` 的输出：它给出**每个依赖的 `kind`**（空 = 生产，
-//! `dev` = 测试）与**解析后的 `features` 列表**，与排版无关，也不会漏
-//! target-specific 段。
+//! 所以改成解析 `cargo metadata` 的输出，并按 cargo 的真实语义计算
+//! **feature 激活闭包**。
 //!
 //! # 与 CI 的分工
 //!
-//! 这里验**依赖图**：没有生产依赖开启 `testing`、门控写在源码里。
-//! `.github/workflows/ci.yml` 的「产物里无测试替身」验**最终事实**：
-//! 真的构建 release、串扫每个 rlib。
-//!
-//! 只留前者会漏掉"依赖图对但产物里还有"（比如某个 `pub use` 从 cfg 块透出来）；
-//! 只留后者要等 CI 才知道，本地改错时看不到。
+//! 这里验**依赖图**。`.github/workflows/ci.yml` 的「产物里无测试替身」验
+//! **最终事实**（真的构建 release、串扫每个 rlib）。只留前者会漏掉"依赖图对
+//! 但产物里还有"；只留后者要等 CI 才知道。
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -53,32 +54,32 @@ fn read(relative: &str) -> String {
     fs::read_to_string(&path).unwrap_or_else(|err| panic!("读不到 {}：{err}", path.display()))
 }
 
-/// 一个依赖项的解析结果。
+/// 一个包声明的 feature 表：`feature -> 它激活的其它 feature / 可选依赖`。
+type FeatureMap = BTreeMap<String, Vec<String>>;
+
+/// 一条依赖声明。
 #[derive(Debug)]
 struct Dep {
-    /// 所属包名。
+    /// 声明方包名。
     package: String,
-    /// 被依赖的包名。
-    name: String,
-    /// `None` = 普通依赖；`Some("dev")` = dev-dependency；`Some("build")` = 构建依赖。
-    ///
-    /// **`build` 也算生产**：构建脚本会被打进发布流程，它依赖的 crate 及其
-    /// feature 同样要编。只看 `kind.is_none()` 会漏掉这一类。
+    /// 被依赖的**真实包名**（重命名时与 `rename` 不同）。
+    target_package: String,
+    /// `None` = 普通依赖；`Some("dev")` / `Some("build")` 分别是测试/构建依赖。
     kind: Option<String>,
-    /// 解析后的 feature 列表（显式请求的那些）。
+    /// 显式请求的 feature。
     features: Vec<String>,
-    /// 目标 crate 的 `default` feature 是否包含 `testing`。
-    ///
-    /// `features` 只是**显式请求**的列表。如果目标 crate 写了
-    /// `default = ["testing"]`，那即使这里 `features` 是空的，
-    /// `uses_default_features = true`（默认）也会把 `testing` 打开。
-    default_enables_testing: bool,
+    /// 是否启用目标包的 `default` feature（`default-features = false` 时为 false）。
+    uses_default_features: bool,
 }
 
-/// 通过 `cargo metadata` 取**真实依赖图**。
-///
-/// `--no-deps` 只给 workspace 内的包，不解析整个 crates.io 依赖树——够用且快。
-fn declared_deps() -> Vec<Dep> {
+/// `cargo metadata` 的解析结果。
+struct Metadata {
+    deps: Vec<Dep>,
+    /// 每个包的 feature 表。
+    features: BTreeMap<String, FeatureMap>,
+}
+
+fn load_metadata() -> Metadata {
     let output = Command::new(env!("CARGO"))
         .args(["metadata", "--format-version", "1", "--no-deps"])
         .current_dir(workspace_root())
@@ -92,39 +93,44 @@ fn declared_deps() -> Vec<Dep> {
 
     let json: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("cargo metadata 的输出不是合法 JSON");
-
-    // 先收集每个包的 `default` feature 展不展开到 `testing`。
-    // `cargo metadata` 的 `packages[].features` 是 `feature -> [激活的 feature]`
-    // 的映射，`default` 就是普通的一项。
     let packages = json["packages"].as_array().expect("packages 应当是数组");
-    let defaults_enabling_testing: std::collections::BTreeMap<String, bool> = packages
-        .iter()
-        .map(|package| {
-            let name = package["name"].as_str().unwrap_or_default().to_owned();
-            let default = package["features"]
-                .get("default")
-                .and_then(|value| value.as_array());
-            let enables = default
-                .into_iter()
-                .flatten()
-                .filter_map(|f| f.as_str())
-                .any(|f| f == "testing");
-            (name, enables)
-        })
-        .collect();
 
+    let mut features = BTreeMap::new();
     let mut deps = Vec::new();
+
     for package in packages {
         let package_name = package["name"].as_str().unwrap_or_default().to_owned();
+
+        // `features` 是 `feature -> [激活的 feature]` 的映射
+        let mut map = FeatureMap::new();
+        if let Some(object) = package["features"].as_object() {
+            for (feature, activated) in object {
+                map.insert(
+                    feature.clone(),
+                    activated
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|f| f.as_str().map(ToOwned::to_owned))
+                        .collect(),
+                );
+            }
+        }
+        features.insert(package_name.clone(), map);
+
         for dep in package["dependencies"].as_array().into_iter().flatten() {
-            let name = dep["name"].as_str().unwrap_or_default().to_owned();
+            // 重命名时 `name` 是**别名**，`package` 才是真实包名。
+            // `cargo metadata` 在 `dependencies[]` 里的 `name` 已经是解析后的
+            // 真实包名，`rename` 才是别名——但为稳妥起见两者都看。
+            let real = dep["package"]
+                .as_str()
+                .or_else(|| dep["name"].as_str())
+                .unwrap_or_default()
+                .to_owned();
+
             deps.push(Dep {
                 package: package_name.clone(),
-                default_enables_testing: defaults_enabling_testing
-                    .get(&name)
-                    .copied()
-                    .unwrap_or(false),
-                name,
+                target_package: real,
                 kind: dep["kind"].as_str().map(ToOwned::to_owned),
                 features: dep["features"]
                     .as_array()
@@ -132,35 +138,88 @@ fn declared_deps() -> Vec<Dep> {
                     .flatten()
                     .filter_map(|f| f.as_str().map(ToOwned::to_owned))
                     .collect(),
+                uses_default_features: dep["uses_default_features"].as_bool().unwrap_or(true),
             });
         }
     }
-    deps
+
+    Metadata { deps, features }
+}
+
+/// 计算一个包在给定初始 feature 集合下的**激活闭包**。
+///
+/// 递归展开：`default = ["standard"]` 且 `standard = ["testing"]` 时，
+/// 激活 `default` 就等于激活了 `testing`。
+///
+/// 可选依赖带来的隐式 feature（`dep:foo`、`foo/bar`）也一起收进去——
+/// 这一层对我们的判据不构成影响，但收全了才不会漏。
+fn activated_features(available: Option<&FeatureMap>, requested: &[String]) -> BTreeSet<String> {
+    let mut active: BTreeSet<String> = BTreeSet::new();
+    let mut stack: Vec<String> = requested.to_vec();
+
+    while let Some(feature) = stack.pop() {
+        if !active.insert(feature.clone()) {
+            continue;
+        }
+        let Some(map) = available else { continue };
+        if let Some(activated) = map.get(&feature) {
+            for next in activated {
+                // `foo/bar` 形式是"启用依赖 foo 的 bar feature"，不是本包的
+                // feature。剥成 `bar`?? 不——它是**目标包**的 feature，
+                // 对本包而言只表示"依赖被启用"。这里不展开它，
+                // 但要把它作为激活项记下来（对判据无害）。
+                stack.push(next.clone());
+            }
+        }
+    }
+    active
 }
 
 /// 生产依赖里有没有人开 `testing`。返回违规描述（空 = 干净）。
 ///
 /// "生产" = 除 `dev` 以外的所有依赖（普通 + `build`）。`build` 也算：
 /// 构建脚本会被打进发布流程，它依赖的 crate 及其 feature 同样要编。
-fn production_deps_enabling_testing(deps: &[Dep]) -> Vec<String> {
-    deps.iter()
-        .filter(|dep| dep.kind.as_deref() != Some("dev"))
-        .filter(|dep| dep.features.iter().any(|f| f == "testing") || dep.default_enables_testing)
-        .map(|dep| {
+fn production_deps_enabling_testing(
+    deps: &[Dep],
+    features: &BTreeMap<String, FeatureMap>,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+
+    for dep in deps {
+        if dep.kind.as_deref() == Some("dev") {
+            continue;
+        }
+
+        let mut requested = dep.features.clone();
+        if dep.uses_default_features {
+            requested.push("default".to_owned());
+        }
+
+        let available = features.get(&dep.target_package);
+        let active = activated_features(available, &requested);
+
+        if active.contains("testing") {
             let how = if dep.features.iter().any(|f| f == "testing") {
                 "显式"
+            } else if dep.uses_default_features && active.contains("default") {
+                "经 default（含 feature 链）"
             } else {
-                "经 default"
+                "经 feature 链"
             };
-            format!("{} -> {}（{how} 开启）", dep.package, dep.name)
-        })
-        .collect()
+            violations.push(format!(
+                "{} -> {}（{how} 开启）",
+                dep.package, dep.target_package
+            ));
+        }
+    }
+
+    violations
 }
 
 #[test]
 fn no_production_dependency_enables_testing() {
-    let deps = declared_deps();
-    let violations = production_deps_enabling_testing(&deps);
+    let meta = load_metadata();
+    let violations = production_deps_enabling_testing(&meta.deps, &meta.features);
     assert!(
         violations.is_empty(),
         "生产依赖不许开 `testing`——workspace 的 feature 是 union 的，\
@@ -169,81 +228,126 @@ fn no_production_dependency_enables_testing() {
     );
 }
 
-/// 反向验证：同一个检查函数喂违规数据必须能抓到。
-///
-/// 第一版的反向用例自己重写了一遍匹配逻辑——那测的是"我写了两遍同样的
-/// 正则"，不是"生产扫描器有效"。这里直接复用 `production_deps_enabling_testing`。
-#[test]
-fn the_guard_actually_catches_a_violation() {
-    let fake = vec![
-        Dep {
-            package: "some-server".to_owned(),
-            name: "agent-game-server-core".to_owned(),
-            kind: None, // 普通生产依赖
-            features: vec!["testing".to_owned()],
-            default_enables_testing: false,
-        },
-        Dep {
-            package: "some-core".to_owned(),
-            name: "agent-game-server-domain".to_owned(),
-            kind: Some("dev".to_owned()), // dev 依赖：允许
-            features: vec!["testing".to_owned()],
-            default_enables_testing: false,
-        },
-    ];
+// ═══════════════════════════════════════════
+// 反向验证：喂构造数据，确认检查真的有效
+// ═══════════════════════════════════════════
 
-    let violations = production_deps_enabling_testing(&fake);
+/// 构造一条依赖 + 一份 feature 表。
+fn fixture(
+    kind: Option<&str>,
+    requested: &[&str],
+    uses_default: bool,
+    feature_map: &[(&str, &[&str])],
+) -> (Vec<Dep>, BTreeMap<String, FeatureMap>) {
+    let deps = vec![Dep {
+        package: "some-server".to_owned(),
+        target_package: "agent-game-server-domain".to_owned(),
+        kind: kind.map(ToOwned::to_owned),
+        features: requested.iter().map(|s| (*s).to_owned()).collect(),
+        uses_default_features: uses_default,
+    }];
+
+    let mut map = FeatureMap::new();
+    for (name, activates) in feature_map {
+        map.insert(
+            (*name).to_owned(),
+            activates.iter().map(|s| (*s).to_owned()).collect(),
+        );
+    }
+    let mut features = BTreeMap::new();
+    features.insert("agent-game-server-domain".to_owned(), map);
+    (deps, features)
+}
+
+#[test]
+fn the_guard_actually_catches_an_explicit_feature() {
+    let (deps, features) = fixture(None, &["testing"], true, &[("testing", &[])]);
+    let violations = production_deps_enabling_testing(&deps, &features);
     assert_eq!(
         violations.len(),
         1,
-        "看门逻辑失效：生产依赖的违规没被抓到、或误报 dev 依赖。实际：{violations:?}"
-    );
-    assert!(
-        violations[0].contains("some-server"),
-        "抓到的应当是生产依赖那条，实际：{violations:?}"
+        "显式开 testing 必须抓到：{violations:?}"
     );
 }
 
-/// `build` 依赖也算生产：构建脚本会被打进发布流程。
 #[test]
 fn the_guard_catches_build_dependencies() {
-    let fake = vec![Dep {
-        package: "some-core".to_owned(),
-        name: "agent-game-server-domain".to_owned(),
-        kind: Some("build".to_owned()),
-        features: vec!["testing".to_owned()],
-        default_enables_testing: false,
-    }];
-
-    let violations = production_deps_enabling_testing(&fake);
+    let (deps, features) = fixture(Some("build"), &["testing"], true, &[("testing", &[])]);
+    let violations = production_deps_enabling_testing(&deps, &features);
     assert_eq!(
         violations.len(),
         1,
-        "build 依赖开 testing 必须被抓到——构建脚本参与发布流程。实际：{violations:?}"
+        "build 依赖开 testing 必须抓到——构建脚本参与发布流程：{violations:?}"
     );
 }
 
-/// `default = ["testing"]` 时，`features = []` 也等于开了 `testing`。
-///
-/// `cargo metadata` 的 `dependencies[].features` 只是**显式请求**的列表；
-/// 目标 crate 的 `default` feature 默认会被启用。
 #[test]
-fn the_guard_catches_default_features() {
-    let fake = vec![Dep {
-        package: "some-core".to_owned(),
-        name: "agent-game-server-domain".to_owned(),
-        kind: None,
-        features: Vec::new(), // 没有显式请求
-        default_enables_testing: true,
-    }];
-
-    let violations = production_deps_enabling_testing(&fake);
+fn the_guard_catches_a_direct_default() {
+    let (deps, features) = fixture(
+        None,
+        &[],
+        true,
+        &[("default", &["testing"]), ("testing", &[])],
+    );
+    let violations = production_deps_enabling_testing(&deps, &features);
     assert_eq!(
         violations.len(),
         1,
-        "目标 crate 的 default feature 含 testing 时必须被抓到。实际：{violations:?}"
+        "default 直接含 testing 必须抓到：{violations:?}"
     );
 }
+
+/// `default = ["standard"]`、`standard = ["testing"]` —— 必须递归展开。
+#[test]
+fn the_guard_catches_a_nested_default_chain() {
+    let (deps, features) = fixture(
+        None,
+        &[],
+        true,
+        &[
+            ("default", &["standard"]),
+            ("standard", &["testing"]),
+            ("testing", &[]),
+        ],
+    );
+    let violations = production_deps_enabling_testing(&deps, &features);
+    assert_eq!(
+        violations.len(),
+        1,
+        "default 经 feature 链激活 testing 必须抓到（要递归展开）：{violations:?}"
+    );
+}
+
+/// `default-features = false` 时 default 不生效，**不该**误报。
+#[test]
+fn the_guard_ignores_default_when_default_features_are_off() {
+    let (deps, features) = fixture(
+        None,
+        &[],
+        false, // default-features = false
+        &[("default", &["testing"]), ("testing", &[])],
+    );
+    let violations = production_deps_enabling_testing(&deps, &features);
+    assert!(
+        violations.is_empty(),
+        "default-features = false 时 default 不生效，不该误报：{violations:?}"
+    );
+}
+
+/// `dev` 依赖开 `testing` 是正常用法，不该误报。
+#[test]
+fn the_guard_ignores_dev_dependencies() {
+    let (deps, features) = fixture(Some("dev"), &["testing"], true, &[("testing", &[])]);
+    let violations = production_deps_enabling_testing(&deps, &features);
+    assert!(
+        violations.is_empty(),
+        "dev 依赖开 testing 是正常用法：{violations:?}"
+    );
+}
+
+// ═══════════════════════════════════════════
+// 源码层面：cfg 门控真的写在代码里
+// ═══════════════════════════════════════════
 
 #[test]
 fn the_testing_module_is_gated_behind_a_feature() {
@@ -288,20 +392,23 @@ fn the_core_reexport_is_gated_too() {
 /// `core` 的 `testing` feature 必须**转发**到 domain。
 ///
 /// 写成空 `testing = []` 的话，给 core 开这个 feature 对 domain 毫无作用
-/// （上一版就是这样）。这条查的是 feature 定义本身，不是依赖图，所以仍读
-/// `Cargo.toml`——但用 `cargo metadata` 也能拿到 `features` 映射，见下一条。
+/// （上一版就是这样）。
 #[test]
 fn the_core_testing_feature_forwards_to_domain() {
-    let manifest = read("crates/agent-game-core/Cargo.toml");
-    // 只剥注释：注释里提到 `testing = []` 是正常的（那是在解释为什么不能这么写）
-    let stripped: String = manifest
-        .lines()
-        .map(|line| line.split('#').next().unwrap_or(""))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let meta = load_metadata();
+    let core = meta
+        .features
+        .get("agent-game-server-core")
+        .expect("metadata 里应当有 core 的 feature 表");
 
+    let activates = core
+        .get("testing")
+        .expect("core 应当声明 `testing` feature");
     assert!(
-        stripped.contains("testing = [\"agent-game-server-domain/testing\"]"),
-        "core 的 `testing` feature 必须转发到 domain。实际：\n{stripped}"
+        activates
+            .iter()
+            .any(|f| f == "agent-game-server-domain/testing"),
+        "core 的 `testing` 必须转发到 `agent-game-server-domain/testing`，\
+         写成空 feature 对 domain 毫无作用。实际：{activates:?}"
     );
 }
