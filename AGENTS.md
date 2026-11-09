@@ -366,6 +366,59 @@ agent-game-server-core --test api_paths` 必须编译失败。
 
 ---
 
+## 19. 测试替身不许进发布产物
+
+`domain::testing::DummyEngine` 的 `admin_view()` 返回 `{"phase": ..., "secret": "admin-only"}`。
+这串假"秘密"如果出现在发布产物里，说明整个模块没被裁掉。
+
+**007（#9）之前它就是无条件编译的。** 模块注释写着"只在 `cfg(test)` 与
+`feature = "testing"` 下编译"，但全 workspace `grep "cfg(feature"` 零命中——
+那个 cfg 从没存在过。实测 `libagent_game_server_domain.rlib`（646,090 字节）
+里能串扫到 `DummyEngine` 与 `admin-only`。
+
+**现在**，四处缺一不可：
+
+| # | 位置 | 做法 |
+|---|---|---|
+| 1 | `domain/src/lib.rs` | `#[cfg(any(test, feature = "testing"))] pub mod testing;` |
+| 2 | `core/src/lib.rs` | 兼容模块 `pub mod testing` 同样加 cfg——**domain 门控了不代表 core 的再导出也门控** |
+| 3 | `core/Cargo.toml` | `testing = ["agent-game-server-domain/testing"]`——必须**转发**，空 `testing = []` 什么也不做 |
+| 4 | 各 crate 的 `[dependencies]` | **不许**开 `testing`。workspace 的 feature 是 union 的，一处漏开会把替身拖进 release |
+
+第 4 条最隐蔽：`server` 曾经在**生产** `[dependencies]` 里写了
+`features = ["testing"]`。它单独看"只是多编译一个模块"，但 feature union 会让
+整条链都打开。
+
+**集成测试怎么拿到替身**：`crates/*/tests/*.rs` 是独立 crate，`cfg(test)` 对它们
+不生效。用自引用 dev-dependency：
+
+```toml
+[dev-dependencies]
+agent-game-server-core = { path = ".", features = ["testing"] }
+```
+
+**看门用例**：
+- `crates/agent-game-core/tests/testing_gate.rs`——五条：domain 门控存在、
+  core 再导出门控存在、core feature 是转发不是空、生产依赖无 `testing`、
+  反向验证（喂一个明确违规的段必须抓到）
+- `.github/workflows/ci.yml` 的「产物里无测试替身」——真的构建 release、
+  串扫每个 rlib
+
+两道防线各管一段：源码用例跑得快、改错了立刻红；CI 那条慢，但测的是最终事实。
+
+**两个不能犯的错**：
+
+- **不要加 `--all-features`**：那会主动打开 `testing`，自己把替身塞回去
+  （实测 643,286 字节的 rlib，`DummyEngine` 在）
+- **不要只构建单个 crate**：`-p core` 漏掉 domain，`-p domain` 漏掉经过 core
+  再导出的路径。必须 `--workspace`
+
+**新增规则时的自检**：往 `crates/agent-game-server/Cargo.toml` 的
+`[dependencies]` 加一行 `agent-game-server-core = { workspace = true, features = ["testing"] }`，
+`cargo test -p agent-game-server-core --test testing_gate` 必须红。
+
+---
+
 ## 附：写作与编码约定
 
 | 项 | 约定 |
@@ -376,4 +429,4 @@ agent-game-server-core --test api_paths` 必须编译失败。
 | 行宽 | 交给 `rustfmt`；中文注释按显示宽度算会误报，因此不设 `max_width` |
 | 错误 | 请求路径上的所有失败都走 `Result`，不 `panic` |
 | 时间 | 代码里用 `Instant`；只有跨进程的展示值才转成毫秒 |
-| 测试替身 | `domain::testing::DummyEngine`（`agent-game-server-domain`），各 crate 的测试共用；它不随二进制发布 |
+| 测试替身 | `domain::testing::DummyEngine`，门控在 `feature = "testing"` 后面。**默认不编译**；各 crate 的测试通过自己的 `[dev-dependencies]` 打开它。见第 19 条 |

@@ -5,7 +5,7 @@
 | 本地编号 | 007 |
 | GitHub Issue | [#9](https://github.com/Hypnoes/agent-game/issues/9) |
 | 分支 | `issue-9-testing-gate` |
-| 状态 | 规划中 |
+| 状态 | 实施中 |
 
 ## 背景
 
@@ -176,3 +176,65 @@ cargo build --release
 
 - `play_liars_dice.rs` 的移出（归 010，见下）
 - 变异测试范围调整
+
+---
+
+## 实施记录
+
+### 改了什么
+
+| # | 位置 | 改动 |
+|---|---|---|
+| 1 | `domain/Cargo.toml` | 新增 `[features] testing = []` |
+| 2 | `domain/src/lib.rs` | `pub mod testing` 加 `#[cfg(any(test, feature = "testing"))]` |
+| 3 | `core/Cargo.toml` | `testing = ["agent-game-server-domain/testing"]`（**转发**，不是空）；`[dev-dependencies]` 加自引用 |
+| 4 | `core/src/lib.rs` | 兼容模块 `pub mod testing` 同样加 cfg |
+| 5 | `server/Cargo.toml` | 生产 `[dependencies]` 去掉 `features = ["testing"]`；移到 `[dev-dependencies]` |
+
+`mcp/Cargo.toml` 原本就在 `[dev-dependencies]`，不需要改——它是正确写法的样板。
+
+### 实测结果
+
+**release 产物（整个 workspace）串扫**：
+
+| rlib | 改前 | 改后 |
+|---|---|---|
+| `libagent_game_server_domain.rlib` | 646,090 字节，`DummyEngine=True` `admin-only=True` | 634,332 字节，**两者都 False** |
+| 其余四个 | — | 全部 False |
+
+**反证**：`cargo build --release --all-features` 之后 domain rlib 变成
+643,286 字节、`DummyEngine=True`。这证实了"验收脚本不能用 `--all-features`"。
+
+### 测试数
+
+526 → **531**（新增 5 条 `testing_gate.rs` 用例）。原有 526 条全绿，一条没少。
+
+### 手工变异验证（四种，全部抓到）
+
+| 变异 | 结果 |
+|---|---|
+| domain 去掉 cfg 门控 | 抓到（结构用例红） |
+| core 再导出去掉 cfg | 抓到 |
+| core feature 改成空 `[]` | 抓到（编译失败：`unresolved import agent_game_server_domain::testing`） |
+| server 生产依赖开 `testing` | 抓到 |
+
+第三个的表现值得记一笔：它不是"断言失败"而是**编译失败**——`testing` feature
+不再转发，core 里 `pub mod testing` 引用的 `agent_game_server_domain::testing`
+就找不到了。验证脚本只看 `test result: FAILED` 会误判为漏检，要同时接受
+`error[E...]` / `error: could not compile`。
+
+### 两道防线的分工
+
+- `crates/agent-game-core/tests/testing_gate.rs`：验**门控写法**（cfg 在不在、
+  feature 是不是转发、生产依赖有没有开）。跑得快。
+- CI 的「产物里无测试替身」：真的 `cargo build --release --workspace`，
+  串扫每个 rlib。慢，但测的是最终事实。
+
+只留前者会漏掉"门控写对了但 feature union 从别处打开"；只留后者要等 CI 才知道，
+本地改错时看不到。
+
+### 一个没做的选择
+
+考虑过把 `testing` 抽成独立 crate（方案 B），更彻底。没做，因为方案 A 已经
+达到"release 产物里没有"这个判据，而独立 crate 要付 workspace 成员、版本号、
+发布边界的成本。如果将来 feature union 以某种意外方式再次污染，再升级。

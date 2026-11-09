@@ -8,6 +8,17 @@ authors.workspace = true
 repository.workspace = true
 description = "agent-game 的领域层：引擎协议、大厅匹配、会话生命周期、注册表、监督者。不依赖具体游戏"
 
+[features]
+# 暴露 `testing` 模块（`DummyEngine`）。默认**关闭**——它不该进发布产物。
+#
+# 各 crate 要拿它，只有两条路：
+#   - 自己的 `[dev-dependencies]` 开这个 feature（测试构建才生效）
+#   - 自己的集成测试是独立 crate、`cfg(test)` 管不到时，用自引用 dev-dependency
+#
+# 绝不能有**生产** `[dependencies]` 开它——workspace 的 feature 会被 union，
+# 一处漏开，`cargo build --release` 就带上测试替身。
+testing = []
+
 # 这一层**没有** agent-game-server-core 依赖，这是刻意的：
 # `domain → games` 的方向由编译器强制，任何反向依赖都会在 cargo 的
 # 循环依赖检查处失败。不是靠源码扫描器——那条路走不通（见 AGENTS.md 第 16 条）。
