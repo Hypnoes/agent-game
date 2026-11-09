@@ -14,6 +14,7 @@ use agent_game_server_core::{
     ActionParams, Config, CreateParams, EngineError, GameEngine, PlayerMode,
 };
 use serde_json::{Value, json};
+use std::time::Instant;
 
 fn guess_engine() -> GuessNumberEngine {
     GuessNumberEngine::new(&CreateParams::default(), &Config::default()).unwrap()
@@ -100,8 +101,20 @@ fn the_guess_number_public_view_carries_the_game_progress() {
     assert_eq!(public["min"], 1);
     assert_eq!(public["max"], 100);
     assert_eq!(public["guess_count"], 1);
-    assert!(public["guesses"].is_array());
-    assert_eq!(public["guesses"].as_array().unwrap().len(), 1);
+
+    // 逐字段断言，不能只查 `is_array()` + 长度：把条目里的 `number` 或
+    // `result` 改成空值/错值，弱断言一样绿（review 指出）。
+    let guesses = public["guesses"].as_array().expect("guesses 应当是数组");
+    assert_eq!(guesses.len(), 1, "猜了一次就应当有一条记录");
+    let entry = &guesses[0];
+    assert_eq!(entry["number"], low, "记录里的数字应当就是刚猜的那个");
+    // 猜的是最小值，答案不可能更小，所以结果必然是 too_low 或 correct
+    let result = entry["result"].as_str().expect("result 应当是字符串");
+    assert!(
+        result == "too_low" || result == "correct",
+        "猜最小值的结果只能是 too_low 或 correct，实际: {result}"
+    );
+    assert!(entry["at_ms"].is_number(), "时间戳应当存在且是数字");
 }
 
 #[test]
@@ -113,7 +126,15 @@ fn the_liars_dice_public_view_carries_the_table() {
     assert_eq!(public["players"], json!(["P0", "P1", "P2"]));
     assert_eq!(public["alive"], json!([true, true, true]));
     assert_eq!(public["dice_per_player"], 3);
-    assert!(public["current_turn"].is_number());
+    // 不只要"是数字"，还得是**有效玩家索引**——把它改成 99 也要能红
+    let turn = public["current_turn"]
+        .as_u64()
+        .expect("current_turn 应当是非负整数");
+    assert!(
+        (turn as usize) < engine.players().len(),
+        "current_turn 必须是有效玩家索引，收到 {turn}（共 {} 人）",
+        engine.players().len()
+    );
     assert!(public["call_history"].is_array());
 }
 
@@ -200,6 +221,59 @@ fn every_history_entry_has_the_full_json_shape() {
             );
         }
     }
+}
+
+/// `TurnTimeout` 的序列化分支与 `Challenge` 是**两段独立代码**。
+///
+/// 不能因为"开盅那条对"就认为超时那条也对——它们各自走 `HistoryEvent`
+/// 的不同 match 分支出 JSON。这条单独构造一条超时记录来钉它。
+///
+/// review 催补：上一条用例只造了 `Bid` + `Challenge`。
+#[test]
+fn a_timeout_entry_serialises_like_any_other_non_bid() {
+    let (mut engine, tokens) = dice_engine();
+    engine.set_current_turn(0);
+    engine.set_dice(vec![vec![1, 2, 3], vec![4, 5, 6], vec![1, 1, 1]]);
+
+    // 先叫一手，超时才有"本轮作废"的记录可写
+    let mut raw = serde_json::Map::new();
+    raw.insert("player_index".to_owned(), Value::from(0));
+    raw.insert("player_token".to_owned(), Value::String(tokens[0].clone()));
+    raw.insert("quantity".to_owned(), Value::from(1));
+    raw.insert("face".to_owned(), Value::from(2));
+    engine.handle_action("bid", ActionParams::new(raw)).unwrap();
+
+    // 把当前回合的玩家逼到超时
+    engine
+        .check_timeout(Instant::now() + engine.turn_timeout() * 2)
+        .unwrap();
+
+    let history = engine.public_view()["call_history"]
+        .as_array()
+        .expect("call_history 应当是数组")
+        .clone();
+    let timeout_entry = history
+        .iter()
+        .find(|entry| {
+            entry["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("超时判负"))
+        })
+        .expect("应当有一条超时记录");
+
+    assert_eq!(
+        timeout_entry["quantity"], 0,
+        "超时的 quantity 必须是 0（不是缺失）"
+    );
+    assert_eq!(timeout_entry["face"], 0, "超时的 face 必须是 0（不是缺失）");
+    assert!(
+        timeout_entry["player"].is_number(),
+        "超时记录也要带玩家索引"
+    );
+    assert!(
+        timeout_entry["player_name"].is_string(),
+        "超时记录也要带玩家名"
+    );
 }
 
 #[test]

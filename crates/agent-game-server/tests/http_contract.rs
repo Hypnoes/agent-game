@@ -367,10 +367,20 @@ async fn the_player_view_needs_the_token_header() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(
-        body["private"]["your_dice"].is_array(),
-        "自己的骰子必须可见: {body}"
-    );
+
+    // 不只要"是数组"：`started_dice` 配的是 `dice_per_player: 3`，
+    // 所以必须是 3 个、每个都在 1..=6。把骰子数改成 0 或越界也要能红
+    // （review 指出这里原来只断言了 `is_array()`）。
+    let dice = body["private"]["your_dice"]
+        .as_array()
+        .unwrap_or_else(|| panic!("自己的骰子必须可见: {body}"));
+    assert_eq!(dice.len(), 3, "每人 3 颗骰子，实际: {dice:?}");
+    for face in dice {
+        let value = face
+            .as_i64()
+            .unwrap_or_else(|| panic!("骰子面必须是整数: {face}"));
+        assert!((1..=6).contains(&value), "骰子面必须在 1..=6，实际 {value}");
+    }
 }
 
 #[tokio::test]
