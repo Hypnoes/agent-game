@@ -120,14 +120,15 @@ fn nested_public_symbols_still_resolve() {
     use agent_game_server_core::games::guess_number::{
         Guess, GuessResult, default_finished_states,
     };
-    use agent_game_server_core::games::liars_dice::{Call, Player};
+    use agent_game_server_core::games::liars_dice::{Bid, HistoryEvent, Player};
     use agent_game_server_core::identity::PlayerIdentity;
     use agent_game_server_core::signal::Subscription;
 
     let _: Option<BudgetError> = None;
     let _: Option<Guess> = None;
     let _: Option<GuessResult> = None;
-    let _: Option<Call> = None;
+    let _: Option<Bid> = None;
+    let _: Option<HistoryEvent> = None;
     let _: Option<Player> = None;
     let _: Option<Subscription> = None;
     let _: fn() -> &'static [&'static str] = default_finished_states;

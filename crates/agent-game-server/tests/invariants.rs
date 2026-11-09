@@ -253,8 +253,12 @@ fn a_timeout_records_the_round_as_void() {
 
     assert_eq!(engine.call_history().len(), before + 1);
     let last = engine.call_history().last().unwrap();
-    assert_eq!(last.quantity, 0, "quantity=0 表示这不是一次叫数");
-    assert!(last.message.contains("超时判负"), "{}", last.message);
+    assert_eq!(
+        last.quantity_and_face(),
+        None,
+        "超时记录不该有 quantity/face——枚举保证这件事，不用哨兵值"
+    );
+    assert!(last.message().contains("超时判负"), "{}", last.message());
 }
 
 #[test]

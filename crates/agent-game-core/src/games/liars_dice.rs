@@ -94,17 +94,22 @@ impl agent_game_server_infra::identity::PlayerIdentity for Player {
     }
 }
 
-/// 一次叫数。
+/// 一次叫数。**只有叫数**——开盅与超时判负是别的事件，见 [`HistoryEvent`]。
+///
+/// 改前这里叫 `Call`，同时承载"叫数"与"历史记录"，用一个
+/// `quantity == 0` 的哨兵值区分两者（`Call::note`）。那是枚举被拆成 struct
+/// 的典型症状：用"业务上有意义的值"（0 颗骰子）编码"这是一个不同类型的事件",
+/// 于是每个消费点都得先 `.filter(|c| c.is_bid())` 才知道自己在看什么。
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Call {
+pub struct Bid {
     pub player_idx: usize,
     pub quantity: i64,
     pub face: i64,
     pub message: String,
 }
 
-impl Call {
-    fn bid(player_idx: usize, quantity: i64, face: i64, message: String) -> Self {
+impl Bid {
+    fn new(player_idx: usize, quantity: i64, face: i64, message: String) -> Self {
         Self {
             player_idx,
             quantity,
@@ -112,20 +117,62 @@ impl Call {
             message,
         }
     }
+}
 
-    /// 非叫数的历史记录（开盅、超时判负），`quantity == 0` 是标记。
-    fn note(player_idx: usize, message: String) -> Self {
-        Self {
-            player_idx,
-            quantity: 0,
-            face: 0,
-            message,
+/// 历史里的一条记录。叫数、开盅、超时判负是三类**不同的事件**，由类型区分。
+///
+/// 消费点不再需要 `.filter(is_bid)`——`filter_map` 出 `Bid` 就只可能是叫数，
+/// 类型系统保证。改前那个哨兵值方案下，`call_history` 里既有叫数又有开盅，
+/// 而所有"只看叫数"的地方都靠一个 `quantity > 0` 的手写判断。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HistoryEvent {
+    /// 某个玩家叫了一次数。
+    Bid(Bid),
+    /// 某个玩家开了上一手盅。
+    Challenge {
+        player_idx: usize,
+        actual: i64,
+        face: i64,
+        message: String,
+    },
+    /// 某个玩家回合超时判负。
+    TurnTimeout { player_idx: usize, message: String },
+}
+
+impl HistoryEvent {
+    /// 这条记录对应的玩家。
+    #[must_use]
+    pub fn player_idx(&self) -> usize {
+        match self {
+            Self::Bid(bid) => bid.player_idx,
+            Self::Challenge { player_idx, .. } | Self::TurnTimeout { player_idx, .. } => {
+                *player_idx
+            }
         }
     }
 
+    /// 是叫数就取出它。
     #[must_use]
-    pub fn is_bid(&self) -> bool {
-        self.quantity > 0
+    pub fn as_bid(&self) -> Option<&Bid> {
+        match self {
+            Self::Bid(bid) => Some(bid),
+            Self::Challenge { .. } | Self::TurnTimeout { .. } => None,
+        }
+    }
+
+    /// 给人看的文字。
+    #[must_use]
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Bid(bid) => &bid.message,
+            Self::Challenge { message, .. } | Self::TurnTimeout { message, .. } => message,
+        }
+    }
+
+    /// 该条记录的 `(quantity, face)`；非叫数返回 `None`。
+    #[must_use]
+    pub fn quantity_and_face(&self) -> Option<(i64, i64)> {
+        self.as_bid().map(|bid| (bid.quantity, bid.face))
     }
 }
 
@@ -138,8 +185,8 @@ pub struct LiarsDiceEngine {
     phase: &'static str,
     players: Vec<Player>,
     current_turn: usize,
-    current_call: Option<Call>,
-    call_history: Vec<Call>,
+    current_call: Option<Bid>,
+    call_history: Vec<HistoryEvent>,
     winner: Option<usize>,
     loser: Option<usize>,
     last_action: Instant,
@@ -196,6 +243,14 @@ impl LiarsDiceEngine {
     #[must_use]
     pub fn player_count(&self) -> usize {
         self.player_count
+    }
+
+    /// 玩家名。索引查不到时返回 `"?"`。
+    ///
+    /// 收掉之前散在 5 处的 `map_or("?", |p| p.name.as_str())`。索引由引擎自己
+    /// 维护，正常路径下必然有效；`"?"` 只是末日兜底，不是预期状态。
+    fn player_name(&self, index: usize) -> &str {
+        self.players.get(index).map_or("?", |p| p.name.as_str())
     }
 
     /// 全部玩家（只读）。
@@ -266,12 +321,12 @@ impl LiarsDiceEngine {
     }
 
     #[must_use]
-    pub fn current_call(&self) -> Option<&Call> {
+    pub fn current_call(&self) -> Option<&Bid> {
         self.current_call.as_ref()
     }
 
     #[must_use]
-    pub fn call_history(&self) -> &[Call] {
+    pub fn call_history(&self) -> &[HistoryEvent] {
         &self.call_history
     }
 
@@ -414,8 +469,8 @@ impl LiarsDiceEngine {
     }
 
     /// 新叫数是否比上一手大。
-    fn is_valid_bid(previous: Option<&Call>, new_quantity: i64, new_face: i64) -> bool {
-        let Some(previous) = previous.filter(|call| call.is_bid()) else {
+    fn is_valid_bid(previous: Option<&Bid>, new_quantity: i64, new_face: i64) -> bool {
+        let Some(previous) = previous else {
             return true;
         };
         if new_face == 1 && previous.face != 1 {
@@ -508,9 +563,9 @@ impl LiarsDiceEngine {
             )));
         }
 
-        let call = Call::bid(player_index, quantity, face, message);
-        self.current_call = Some(call.clone());
-        self.call_history.push(call);
+        let bid = Bid::new(player_index, quantity, face, message);
+        self.current_call = Some(bid.clone());
+        self.call_history.push(HistoryEvent::Bid(bid));
         self.current_turn = self.next_alive_index(player_index);
         self.last_action = Instant::now();
         self.signal.notify();
@@ -533,10 +588,12 @@ impl LiarsDiceEngine {
             call.player_idx
         };
 
-        self.call_history.push(Call::note(
-            player_index,
-            format!("开！(实际 {actual} 个 {})", call.face),
-        ));
+        self.call_history.push(HistoryEvent::Challenge {
+            player_idx: player_index,
+            actual,
+            face: call.face,
+            message: format!("开！(实际 {actual} 个 {})", call.face),
+        });
         self.current_call = None;
         self.loser = Some(loser);
         self.last_action = Instant::now();
@@ -609,13 +666,20 @@ impl LiarsDiceEngine {
             "players": self.players.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
             "alive": self.players.iter().map(Player::is_alive).collect::<Vec<_>>(),
             "dice_per_player": self.dice_per_player,
-            "call_history": self.call_history.iter().map(|call| serde_json::json!({
-                "player": call.player_idx,
-                "player_name": self.players.get(call.player_idx).map_or("?", |p| p.name.as_str()),
-                "quantity": call.quantity,
-                "face": call.face,
-                "message": call.message,
-            })).collect::<Vec<_>>(),
+            "call_history": self.call_history.iter().map(|event| {
+                let idx = event.player_idx();
+                // 非叫数（开盅、超时）没有 quantity/face，序列化成 0 ——
+                // 这是**对外 JSON 契约**的一部分，改前用哨兵值也是 0，
+                // 所以下游（admin 页面、Agent prompt）看到的东西不变。
+                let (quantity, face) = event.quantity_and_face().unwrap_or((0, 0));
+                serde_json::json!({
+                    "player": idx,
+                    "player_name": self.player_name(idx),
+                    "quantity": quantity,
+                    "face": face,
+                    "message": event.message(),
+                })
+            }).collect::<Vec<_>>(),
         })
     }
 
@@ -650,8 +714,7 @@ impl LiarsDiceEngine {
                             "call_history",
                             self.call_history
                                 .iter()
-                                .filter(|call| call.is_bid())
-                                .map(|call| (call.quantity, call.face))
+                                .filter_map(HistoryEvent::quantity_and_face)
                                 .collect::<Vec<_>>(),
                         ),
                 )
@@ -917,8 +980,10 @@ impl GameEngine for LiarsDiceEngine {
             // 超时与开盅同样是"输掉本轮"：本轮叫数必须清零。留着上一手的叫数，
             // 下家既不能加码（可能已超过场上骰子总数）也不能弃权，只能替别人开盅。
             if self.current_call.is_some() {
-                self.call_history
-                    .push(Call::note(loser, "超时判负（本轮作废）".to_owned()));
+                self.call_history.push(HistoryEvent::TurnTimeout {
+                    player_idx: loser,
+                    message: "超时判负（本轮作废）".to_owned(),
+                });
             }
             self.current_call = None;
 
@@ -1510,8 +1575,12 @@ mod tests {
             .check_timeout(Instant::now() + engine.turn_timeout() * 2)
             .unwrap();
         let last = engine.call_history().last().unwrap();
-        assert_eq!(last.quantity, 0);
-        assert!(last.message.contains("超时判负"), "{}", last.message);
+        assert!(
+            matches!(last, HistoryEvent::TurnTimeout { .. }),
+            "超时应当记一条 TurnTimeout，实际: {last:?}"
+        );
+        assert_eq!(last.quantity_and_face(), None, "超时不是叫数");
+        assert!(last.message().contains("超时判负"), "{}", last.message());
     }
 
     #[test]

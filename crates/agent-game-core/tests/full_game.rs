@@ -14,6 +14,7 @@
 use std::time::Instant;
 
 use agent_game_server_core::games::LiarsDiceEngine;
+use agent_game_server_core::games::liars_dice::HistoryEvent;
 use agent_game_server_core::{ActionParams, Config, CreateParams, GameEngine};
 use rand::RngExt as _;
 use rand::SeedableRng as _;
@@ -361,16 +362,41 @@ fn join_then_play_produces_a_stable_call_history() {
     let mut rng = ChaCha8Rng::seed_from_u64(77);
     play_until_finished(&mut engine, &tokens, &mut rng, false, 400);
 
-    // 历史里每条记录都必须能指向一名真实玩家，且开盅/超时记录的 quantity 为 0
-    for call in engine.call_history() {
-        assert!(call.player_idx < engine.players().len());
-        if call.is_bid() {
-            assert!((1..=6).contains(&call.face));
-            assert!(call.quantity >= 1);
-        } else {
-            assert_eq!(call.quantity, 0);
-            assert_ne!(call.message, "", "叫数消息不该为空");
+    // 历史里每条记录都必须能指向一名真实玩家。
+    // 叫数必须是合法值；开盅与超时**根本没有** quantity/face 字段——
+    // 这是枚举相对于"哨兵值 0"的好处：写不出"非叫数却有数量"这种状态。
+    for event in engine.call_history() {
+        assert!(
+            event.player_idx() < engine.players().len(),
+            "历史记录的玩家索引必须有效: {event:?}"
+        );
+        match event {
+            HistoryEvent::Bid(bid) => {
+                assert!((1..=6).contains(&bid.face), "面值越界: {bid:?}");
+                assert!(bid.quantity >= 1, "叫数数量必须 ≥ 1: {bid:?}");
+                // `message` 是可选参数（`optional_str("message").unwrap_or("")`），
+                // 允许为空——这不是缺陷，是设计。
+            }
+            HistoryEvent::Challenge {
+                actual,
+                face,
+                message,
+                ..
+            } => {
+                assert!((0..=6).contains(actual), "实际数量越界: {actual}");
+                assert!((1..=6).contains(face), "面值越界: {face}");
+                assert!(!message.is_empty(), "开盅消息不该为空");
+            }
+            HistoryEvent::TurnTimeout { message, .. } => {
+                assert!(!message.is_empty(), "超时消息不该为空");
+            }
         }
+        // 只有叫数才有 quantity/face
+        assert_eq!(
+            event.quantity_and_face().is_some(),
+            matches!(event, HistoryEvent::Bid(_)),
+            "quantity_and_face 应当只对叫数返回 Some: {event:?}"
+        );
     }
     let _ = json!({});
 }
