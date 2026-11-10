@@ -81,7 +81,7 @@ impl GameManager {
                     continue;
                 }
                 let engine = session.engine.lock().await;
-                let waiting = engine.phase() == "waiting" && !engine.is_finished();
+                let waiting = engine.phase() == engine.waiting_phase() && !engine.is_finished();
                 drop(engine);
                 if waiting && compatible(&session.setup, &setup) {
                     return Ok(Arc::clone(session));

@@ -44,6 +44,59 @@ fn shared_prompts() -> &'static PromptStore {
     PROMPTS.get_or_init(|| PromptStore::new(PROMPT_TOML))
 }
 
+/// 大话骰的阶段。三个取值覆盖全部生命周期，没有第四个。
+///
+/// # 为什么要有这个枚举而不是继续用 `&'static str`
+///
+/// 字符串字段的两个问题：
+///
+/// 1. **错字没有编译期保护**。`self.phase = "biddng"` 能编译、能跑，
+///    只有大厅匹配或 admin 页面归类时才露馅
+/// 2. **比较是字符串比较**，散在十几个地方（`== "waiting"`、`!= "bidding"`…），
+///    改一个名字要全文搜
+///
+/// 枚举只解决"取值有限"，**不解决"转移合法"**——`self.phase = Phase::Finished`
+/// 从 `Waiting` 直接跳过去照样能编译。所以另配 [`Self::can_transition_to`]
+/// 与 `LiarsDiceEngine::transition_to`。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    /// 等人入场。
+    Waiting,
+    /// 已开局、正在叫数。
+    Bidding,
+    /// 只剩一名存活玩家（或对局被判定结束）。
+    Finished,
+}
+
+impl std::fmt::Display for Phase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Phase {
+    /// 对外 JSON 里的名字。**这是契约**——`admin.html` 靠它归类对局，
+    /// 改了会让页面静默归类错。
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Waiting => "waiting",
+            Self::Bidding => "bidding",
+            Self::Finished => "finished",
+        }
+    }
+
+    /// 从自己转移到 `next` 是否合法。
+    ///
+    /// 大话骰的合法转移只有两条：等人大厅里满员开局、以及开局后分出胜负。
+    /// 反向（`Finished → Bidding`）与跳跃（`Waiting → Finished`）都不许。
+    fn can_transition_to(self, next: Self) -> bool {
+        matches!(
+            (self, next),
+            (Self::Waiting, Self::Bidding) | (Self::Bidding, Self::Finished)
+        )
+    }
+}
+
 /// 一名玩家。
 ///
 /// # 为什么 `alive` 是私有字段而不是从 `dice` 派生
@@ -182,7 +235,7 @@ pub struct LiarsDiceEngine {
     game_type: &'static str,
     player_count: usize,
     dice_per_player: usize,
-    phase: &'static str,
+    phase: Phase,
     players: Vec<Player>,
     current_turn: usize,
     current_call: Option<Bid>,
@@ -225,7 +278,7 @@ impl LiarsDiceEngine {
             game_type: "liars_dice",
             player_count,
             dice_per_player,
-            phase: "waiting",
+            phase: Phase::Waiting,
             players: Vec::new(),
             current_turn: 0,
             current_call: None,
@@ -293,6 +346,28 @@ impl LiarsDiceEngine {
         }
     }
 
+    /// 切换阶段。**所有**阶段赋值都必须走这里。
+    ///
+    /// 返回 `Result` 而不是 `assert!`：引擎 panic 会被 `GameManager::act` 的
+    /// `catch_unwind` 捕获并**毒化整个对局**（`supervisor.rs`），而非法转移
+    /// 是可以用正常错误路径处理的。`check_timeout` 里 panic 还会走进
+    /// AGENTS.md 第 10 条的隔离路径——那是给"引擎内部 bug"兜底的，
+    /// 不该用来做常规检查。
+    ///
+    /// # Errors
+    /// 转移不合法时返回 `EngineError::invalid`。
+    fn transition_to(&mut self, next: Phase) -> Result<(), EngineError> {
+        if !self.phase.can_transition_to(next) {
+            return Err(EngineError::invalid(format!(
+                "非法状态转移：{} → {}",
+                self.phase.as_str(),
+                next.as_str()
+            )));
+        }
+        self.phase = next;
+        Ok(())
+    }
+
     /// 摆完骰子之后 `alive` 该是什么。
     ///
     /// 关键区分：**零骰不等于出局**。
@@ -303,8 +378,8 @@ impl LiarsDiceEngine {
     /// `set_dice` / `set_player_dice` 都走这一个判断，语义统一。改前
     /// `set_dice` 只改骰子、`set_player_dice` 顺带改 `alive`，两个测试入口
     /// 的语义不一致（review 指出）。
-    fn alive_after_dealing(phase: &str, dice: &[i64]) -> bool {
-        phase == "waiting" || !dice.is_empty()
+    fn alive_after_dealing(phase: Phase, dice: &[i64]) -> bool {
+        phase == Phase::Waiting || !dice.is_empty()
     }
 
     /// 直接摆某个玩家的骰子。同样只给测试用。
@@ -453,7 +528,7 @@ impl LiarsDiceEngine {
     }
 
     fn check_turn(&self, player_index: usize) -> Result<(), EngineError> {
-        if self.phase != "bidding" {
+        if self.phase != Phase::Bidding {
             return Err(EngineError::invalid(format!(
                 "游戏阶段是 {}，不能行动",
                 self.phase
@@ -512,7 +587,7 @@ impl LiarsDiceEngine {
             || (new_quantity == previous.quantity && new_face > previous.face)
     }
 
-    fn start_game(&mut self) {
+    fn start_game(&mut self) -> Result<(), EngineError> {
         let mut rng = rand::rng();
         for player in &mut self.players {
             player.dice = if player.is_alive() {
@@ -523,7 +598,7 @@ impl LiarsDiceEngine {
                 Vec::new()
             };
         }
-        self.phase = "bidding";
+        self.transition_to(Phase::Bidding)?;
         let alive = self.alive_indices();
         self.current_turn = if alive.is_empty() {
             0
@@ -532,6 +607,7 @@ impl LiarsDiceEngine {
         };
         self.last_action = Instant::now();
         self.signal.notify();
+        Ok(())
     }
 
     /// 加一个玩家。人满自动开局。返回玩家编号。
@@ -551,7 +627,7 @@ impl LiarsDiceEngine {
 
         // 对局已经开始还允许追加玩家，会触发 `start_game()` 重摇全场骰子、
         // 把进行中的对局推倒重来，所以非 waiting 阶段一律拒绝。
-        if self.phase != "waiting" {
+        if self.phase != Phase::Waiting {
             return Err(EngineError::invalid(format!(
                 "对局已开始（{}），无法加入",
                 self.phase
@@ -564,7 +640,7 @@ impl LiarsDiceEngine {
         self.last_action = Instant::now();
 
         if self.players.len() >= self.player_count {
-            self.start_game();
+            self.start_game()?;
         } else {
             // 人还没满，同样是一次状态变更：大厅里等待的玩家要看到人数变化
             self.signal.notify();
@@ -627,7 +703,7 @@ impl LiarsDiceEngine {
         self.loser = Some(loser);
         self.last_action = Instant::now();
 
-        if !self.eliminate(loser) {
+        if !self.eliminate(loser)? {
             // 对局继续：本轮叫数清零，由输家先叫下一轮（已出局则顺延）
             self.current_turn = self.next_turn_after(loser);
         }
@@ -640,7 +716,7 @@ impl LiarsDiceEngine {
     ///
     /// 场上只剩 2 名存活玩家时是突然死亡：本轮输家直接出局。
     /// 返回对局是否因此结束。
-    fn eliminate(&mut self, player_index: usize) -> bool {
+    fn eliminate(&mut self, player_index: usize) -> Result<bool, EngineError> {
         // 先算存活人数：下面要可变借用 `players`，同一个表达式里不能再读 self
         let sudden_death = self.alive_indices().len() <= 2;
         if let Some(player) = self.players.get_mut(player_index)
@@ -659,10 +735,10 @@ impl LiarsDiceEngine {
     }
 
     /// 只剩一名存活玩家时结束对局，最后存活者即 winner。
-    fn finish_if_over(&mut self) -> bool {
+    fn finish_if_over(&mut self) -> Result<bool, EngineError> {
         let alive = self.alive_indices();
         if alive.len() > 1 {
-            return false;
+            return Ok(false);
         }
 
         self.winner = alive.first().copied();
@@ -671,11 +747,11 @@ impl LiarsDiceEngine {
         if let Some(winner) = self.winner {
             self.current_turn = winner;
         }
-        if self.phase != "finished" {
-            self.phase = "finished";
+        if self.phase != Phase::Finished {
+            self.transition_to(Phase::Finished)?;
             self.signal.notify();
         }
-        true
+        Ok(true)
     }
 
     fn build_public_view(&self) -> Value {
@@ -688,7 +764,7 @@ impl LiarsDiceEngine {
             })
         });
         serde_json::json!({
-            "phase": self.phase,
+            "phase": self.phase.as_str(),
             "current_turn": self.current_turn,
             "current_call": current_call,
             "last_message": self.current_call.as_ref().map_or("", |call| call.message.as_str()),
@@ -723,7 +799,7 @@ impl LiarsDiceEngine {
         let remaining = (self.turn_timeout.as_secs().saturating_sub(elapsed)) as f64;
 
         match self.phase {
-            "finished" => {
+            Phase::Finished => {
                 let winner = self
                     .winner
                     .and_then(|index| self.players.get(index))
@@ -748,7 +824,7 @@ impl LiarsDiceEngine {
                         ),
                 )
             }
-            "waiting" => self.render(
+            Phase::Waiting => self.render(
                 "waiting",
                 &Ctx::new()
                     .with("players", self.players.len())
@@ -756,7 +832,7 @@ impl LiarsDiceEngine {
                     .with("waited", waited as i64)
                     .with("wait_budget", wait_budget),
             ),
-            _ => {
+            Phase::Bidding => {
                 let Some(index) = player_index.filter(|index| *index < self.players.len()) else {
                     return String::new();
                 };
@@ -858,7 +934,11 @@ impl GameEngine for LiarsDiceEngine {
     }
 
     fn phase(&self) -> &'static str {
-        self.phase
+        self.phase.as_str()
+    }
+
+    fn waiting_phase(&self) -> &'static str {
+        Phase::Waiting.as_str()
     }
 
     fn admin_view(&self) -> Value {
@@ -883,7 +963,10 @@ impl GameEngine for LiarsDiceEngine {
                 "loser".to_owned(),
                 self.loser.map_or(Value::Null, Value::from),
             );
-            map.insert("status".to_owned(), Value::String(self.phase.to_owned()));
+            map.insert(
+                "status".to_owned(),
+                Value::String(self.phase.as_str().to_owned()),
+            );
         }
         view
     }
@@ -899,7 +982,7 @@ impl GameEngine for LiarsDiceEngine {
             "your_dice": self.players[index].dice.clone(),
             "your_index": index,
         });
-        if self.phase == "finished"
+        if self.phase == Phase::Finished
             && let Value::Object(ref mut map) = private
         {
             {
@@ -953,7 +1036,10 @@ impl GameEngine for LiarsDiceEngine {
                         "player_token".to_owned(),
                         Value::String(self.players[index].token.clone()),
                     );
-                    map.insert("phase".to_owned(), Value::String(self.phase.to_owned()));
+                    map.insert(
+                        "phase".to_owned(),
+                        Value::String(self.phase.as_str().to_owned()),
+                    );
                     map.insert("player_count".to_owned(), Value::from(self.players.len()));
                     map.insert("needed".to_owned(), Value::from(self.player_count));
                     map.insert(
@@ -990,7 +1076,7 @@ impl GameEngine for LiarsDiceEngine {
 
     fn check_timeout(&mut self, now: Instant) -> Result<Option<TimeoutEvent>, EngineError> {
         // 匹配超时
-        if self.phase == "waiting"
+        if self.phase == Phase::Waiting
             && now.saturating_duration_since(self.last_action) > LOBBY_TIMEOUT
         {
             self.signal.notify();
@@ -999,7 +1085,7 @@ impl GameEngine for LiarsDiceEngine {
 
         // 回合超时：超时者按"输掉本轮"处理（掉骰/出局），而不是让下家白捡一局。
         // 回合必须交出去，否则超时者会立刻再次超时，对局永远卡住。
-        if self.phase == "bidding"
+        if self.phase == Phase::Bidding
             && now.saturating_duration_since(self.last_action) > self.turn_timeout
         {
             let loser = self.current_turn;
@@ -1016,7 +1102,7 @@ impl GameEngine for LiarsDiceEngine {
             }
             self.current_call = None;
 
-            if !self.eliminate(loser) {
+            if !self.eliminate(loser)? {
                 self.current_turn = self.next_alive_index(loser);
             }
             // 判负同样要唤醒等待者，否则等待方要等满整个预算才知道对局已结束
@@ -1034,10 +1120,10 @@ impl GameEngine for LiarsDiceEngine {
         // 等待条件：轮到我了，或对局已经结束。
         // 多于两人时 notify 是全局广播——别人叫数也会唤醒我，所以醒来后必须
         // 重新判断这个条件，否则会被假唤醒骗去"行动"。
-        if self.phase == "finished" {
+        if self.phase == Phase::Finished {
             return true;
         }
-        self.phase == "bidding" && self.current_turn == player_index
+        self.phase == Phase::Bidding && self.current_turn == player_index
     }
 
     fn find_player_by_token(&self, token: &str) -> Option<usize> {
@@ -2003,5 +2089,83 @@ mod tests {
         assert_eq!(engine.player_name(1), engine.players()[1].name);
         // 越界只是末日兜底，不是预期状态
         assert_eq!(engine.player_name(99), "?");
+    }
+
+    // ═══════════════════════════════════════════
+    // 状态转移的合法性
+    // ═══════════════════════════════════════════
+
+    /// 非法转移必须返回 `Err`，**不能 panic**。
+    ///
+    /// 为什么这条重要：引擎 panic 会被 `GameManager::act` 的 `catch_unwind`
+    /// 捕获并毒化整个对局（`supervisor.rs`）；`check_timeout` 里的 panic 还会
+    /// 走进 AGENTS.md 第 10 条的隔离路径——那是给"引擎内部 bug"兜底的，
+    /// 不该用来做常规的非法转移检查。
+    #[test]
+    fn illegal_transitions_return_an_error_instead_of_panicking() {
+        let (mut engine, _tokens) = started(2, 2);
+
+        // 已开局（Bidding），不能回到 Waiting
+        let err = engine.transition_to(Phase::Waiting).unwrap_err();
+        assert!(
+            matches!(err, EngineError::InvalidInput(_)),
+            "非法转移应当是 InvalidInput，实际: {err:?}"
+        );
+        assert!(engine.phase() == "bidding", "失败的转移不该改变状态");
+
+        // 把对局打到结束，再试倒流
+        engine.set_dice(vec![vec![1], vec![2]]);
+        engine.set_current_turn(0);
+        let tokens: Vec<String> = engine.players().iter().map(|p| p.token.clone()).collect();
+        bid(&mut engine, 0, &tokens[0], 1, 3).unwrap();
+        engine
+            .handle_action(
+                "challenge",
+                ActionParams::new({
+                    let mut raw = serde_json::Map::new();
+                    raw.insert("player_index".to_owned(), Value::from(1));
+                    raw.insert("player_token".to_owned(), Value::from(tokens[1].clone()));
+                    raw
+                }),
+            )
+            .unwrap();
+        assert_eq!(engine.phase(), "finished");
+
+        // Finished 不能回到 Bidding，也不能回到 Waiting
+        assert!(engine.transition_to(Phase::Bidding).is_err());
+        assert!(engine.transition_to(Phase::Waiting).is_err());
+        assert_eq!(engine.phase(), "finished", "状态不该被改坏");
+    }
+
+    /// 合法转移的两条都走得通。
+    #[test]
+    fn the_two_legal_transitions_are_allowed() {
+        // Waiting -> Bidding：满员开局
+        let (mut engine, _tokens) = started(2, 2);
+        assert_eq!(engine.phase(), "bidding");
+
+        // 再确认 `can_transition_to` 的判定本身
+        assert!(Phase::Waiting.can_transition_to(Phase::Bidding));
+        assert!(Phase::Bidding.can_transition_to(Phase::Finished));
+        assert!(!Phase::Bidding.can_transition_to(Phase::Waiting));
+        assert!(!Phase::Waiting.can_transition_to(Phase::Finished));
+        assert!(!Phase::Finished.can_transition_to(Phase::Bidding));
+        assert!(!Phase::Finished.can_transition_to(Phase::Waiting));
+
+        // 自转移到同一状态也不合法：满员后再调一次开局应当报错
+        let err = engine.transition_to(Phase::Bidding).unwrap_err();
+        assert!(matches!(err, EngineError::InvalidInput(_)));
+    }
+
+    /// `waiting_phase()` 自报的名字要与 `phase()` 在大厅态时相等。
+    #[test]
+    fn the_waiting_phase_name_matches_the_lobby_state() {
+        let mut raw = serde_json::Map::new();
+        raw.insert("player_count".to_owned(), Value::from(2));
+        raw.insert("dice_per_player".to_owned(), Value::from(2));
+        let engine = LiarsDiceEngine::new(&CreateParams::new(raw), &Config::default()).unwrap();
+
+        assert_eq!(engine.phase(), engine.waiting_phase());
+        assert_eq!(engine.waiting_phase(), "waiting");
     }
 }

@@ -66,6 +66,58 @@ pub struct Guess {
     pub at_ms: u128,
 }
 
+/// 猜数字的阶段。
+///
+/// 与 `liars_dice::Phase` 的差别：这里**没有大厅态**（单人游戏，创建即开局），
+/// 且 `InProgress` 可以从**任意阶段**进入（玩家重开一局）。
+///
+/// # 为什么要有枚举
+///
+/// 字符串字段的问题是"错字能编译"。`self.phase = "in_progess"` 不会报错，
+/// 只有 `is_finished()` 或 admin 页面归类时才露馅。枚举把错误提前到编译期。
+///
+/// 枚举**只约束取值，不约束转移**——`self.phase = Phase::Won` 从 `Won` 再赋
+/// 一次照样能编译。转移合法性由 `transition_to` 管。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    /// 进行中。
+    InProgress,
+    /// 猜对了。
+    Won,
+    /// 机会用完或超时。
+    Lost,
+}
+
+impl Phase {
+    /// 对外 JSON 里的名字。**这是契约**——`admin.html` 靠它归类"进行中/已结束"。
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::InProgress => "in_progress",
+            Self::Won => "won",
+            Self::Lost => "lost",
+        }
+    }
+
+    /// 从自己转移到 `next` 是否合法。
+    ///
+    /// - 进行中 → 赢 / 输
+    /// - **任意 → 进行中**：`reset()` 允许随时重开一局
+    fn can_transition_to(self, next: Self) -> bool {
+        match (self, next) {
+            // 任意阶段都能重置回进行中（`reset()` 依赖这条）
+            (_, Self::InProgress) => true,
+            (Self::InProgress, Self::Won | Self::Lost) => true,
+            _ => false,
+        }
+    }
+}
+
+impl std::fmt::Display for Phase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// 猜数字引擎。每个实例管理一局游戏。
 #[derive(Debug)]
 pub struct GuessNumberEngine {
@@ -73,7 +125,7 @@ pub struct GuessNumberEngine {
     min: i64,
     max: i64,
     max_attempts: i64,
-    phase: &'static str,
+    phase: Phase,
     target: i64,
     guesses: Vec<Guess>,
     guess_count: i64,
@@ -119,7 +171,7 @@ impl GuessNumberEngine {
             min,
             max,
             max_attempts,
-            phase: "in_progress",
+            phase: Phase::InProgress,
             target: 0,
             guesses: Vec::new(),
             guess_count: 0,
@@ -221,7 +273,11 @@ impl GuessNumberEngine {
     /// 重置成一局全新的游戏。配置（min/max/max_attempts）不变。
     fn reset(&mut self) {
         let previous = Self::carry_over_target(self.phase, self.target);
-        self.phase = "in_progress";
+        // reset 允许从任意阶段进入 `InProgress`（`can_transition_to` 里那条
+        // `(_, Phase::InProgress)`），所以这里**不可能**失败。仍然调
+        // `transition_to` 而不是直接赋值，是为了让"所有阶段赋值走同一个入口"
+        // 这条规矩不留例外；`let _ =` 表示"我知道它不会失败"。
+        let _ = self.transition_to(Phase::InProgress);
         self.roll_target(previous);
         self.guesses.clear();
         self.guess_count = 0;
@@ -232,6 +288,26 @@ impl GuessNumberEngine {
         self.signal.notify();
     }
 
+    /// 切换阶段。**所有**阶段赋值都必须走这里。
+    ///
+    /// 返回 `Result` 而不是 `assert!`：引擎 panic 会被 `GameManager::act` 的
+    /// `catch_unwind` 捕获并**毒化整个对局**，而非法转移是可以用正常错误路径
+    /// 处理的。
+    ///
+    /// # Errors
+    /// 转移不合法时返回 `EngineError::invalid`。
+    fn transition_to(&mut self, next: Phase) -> Result<(), EngineError> {
+        if !self.phase.can_transition_to(next) {
+            return Err(EngineError::invalid(format!(
+                "非法状态转移：{} → {}",
+                self.phase.as_str(),
+                next.as_str()
+            )));
+        }
+        self.phase = next;
+        Ok(())
+    }
+
     /// 重置时要不要把上一局的 target 带过去"避开"。
     ///
     /// - 进行中重置：`None` —— 不强制换答案（玩家可能只是想清空猜数记录）
@@ -240,16 +316,18 @@ impl GuessNumberEngine {
     /// 抽成关联函数是为了让这个**分支决策**可以被确定性测试。之前它内联在
     /// `reset()` 里，测试只能靠"反复重置看 target 变不变"来间接推断，那依赖
     /// 概率。现在可以直接断言返回值。
-    fn carry_over_target(phase: &str, target: i64) -> Option<i64> {
-        if phase == "in_progress" {
+    fn carry_over_target(phase: Phase, target: i64) -> Option<i64> {
+        if phase == Phase::InProgress {
             None
         } else {
             Some(target)
         }
     }
 
-    fn end(&mut self, phase: &'static str) {
-        self.phase = phase;
+    fn end(&mut self, phase: Phase) {
+        // `end` 只从"进行中"调，两条转移都合法；失败意味着调用方放错了位置，
+        // 属于代码 bug。用 `?` 传出去，不 panic。
+        let _ = self.transition_to(phase);
         self.ended_at_ms = Some(self.started_at.elapsed().as_millis());
         self.signal.notify();
     }
@@ -299,7 +377,7 @@ impl GuessNumberEngine {
     }
 
     fn guess(&mut self, raw: &Value) -> Result<(), EngineError> {
-        if self.phase != "in_progress" {
+        if self.phase != Phase::InProgress {
             return Err(EngineError::invalid(format!("游戏已结束 ({})", self.phase)));
         }
 
@@ -320,9 +398,9 @@ impl GuessNumberEngine {
         });
 
         if result == GuessResult::Correct {
-            self.end("won");
+            self.end(Phase::Won);
         } else if self.guess_count >= self.max_attempts {
-            self.end("lost");
+            self.end(Phase::Lost);
         } else {
             // 猜一次也是状态变更：等待方（如果有）要看到新的历史
             self.signal.notify();
@@ -332,7 +410,7 @@ impl GuessNumberEngine {
 
     fn build_prompt(&self) -> String {
         match self.phase {
-            "won" => {
+            Phase::Won => {
                 let last = self.guesses.last().map_or(0, |guess| guess.number);
                 self.render(
                     "won",
@@ -341,7 +419,7 @@ impl GuessNumberEngine {
                         .with("count", self.guess_count),
                 )
             }
-            "lost" => {
+            Phase::Lost => {
                 let history: Vec<i64> = self.guesses.iter().map(|guess| guess.number).collect();
                 self.render(
                     "lost",
@@ -351,7 +429,7 @@ impl GuessNumberEngine {
                         .with("history", history),
                 )
             }
-            _ => match self.guesses.last() {
+            Phase::InProgress => match self.guesses.last() {
                 Some(last) => {
                     let history: Vec<i64> = self.guesses.iter().map(|g| g.number).collect();
                     self.render(
@@ -397,12 +475,12 @@ impl GameEngine for GuessNumberEngine {
     }
 
     fn phase(&self) -> &'static str {
-        self.phase
+        self.phase.as_str()
     }
 
     fn admin_view(&self) -> Value {
         serde_json::json!({
-            "status": self.phase,
+            "status": self.phase.as_str(),
             "min": self.min,
             "max": self.max,
             "guess_count": self.guess_count,
@@ -420,7 +498,7 @@ impl GameEngine for GuessNumberEngine {
     fn public_view(&self) -> Value {
         // 刻意不写 `target`：公开视图是**构造**出来的，不是从 admin 视图里删键。
         serde_json::json!({
-            "status": self.phase,
+            "status": self.phase.as_str(),
             "min": self.min,
             "max": self.max,
             "guess_count": self.guess_count,
@@ -437,7 +515,7 @@ impl GameEngine for GuessNumberEngine {
     fn player_view(&self, _player_index: Option<usize>) -> Result<PlayerView, EngineError> {
         Ok(PlayerView {
             public: serde_json::json!({
-                "status": self.phase,
+                "status": self.phase.as_str(),
                 "min": self.min,
                 "max": self.max,
                 "guess_count": self.guess_count,
@@ -479,11 +557,11 @@ impl GameEngine for GuessNumberEngine {
     }
 
     fn check_timeout(&mut self, now: Instant) -> Result<Option<TimeoutEvent>, EngineError> {
-        if self.phase == "in_progress"
+        if self.phase == Phase::InProgress
             && now.saturating_duration_since(self.last_action) > IDLE_TIMEOUT
         {
             let elapsed = now.saturating_duration_since(self.started_at).as_millis();
-            self.phase = "lost";
+            self.transition_to(Phase::Lost)?;
             self.ended_at_ms = Some(elapsed);
             self.signal.notify();
             return Ok(Some(TimeoutEvent::session_timeout()));
@@ -886,5 +964,85 @@ mod tests {
         assert!(engine.is_ready_for(0));
         assert_eq!(engine.player_mode(), PlayerMode::Single);
         assert!(engine.player_tokens().is_none());
+    }
+
+    // ═══════════════════════════════════════════
+    // 状态转移的合法性
+    // ═══════════════════════════════════════════
+
+    /// 非法转移返回 `Err`，不 panic。
+    ///
+    /// 与 `liars_dice` 的差别：这里**允许**从任意阶段重置回 `InProgress`，
+    /// 所以"非法"只剩终点是 `Won` / `Lost` 的那几条。
+    #[test]
+    fn illegal_transitions_return_an_error_instead_of_panicking() {
+        let mut engine = engine();
+        assert_eq!(engine.phase(), "in_progress");
+
+        // `InProgress -> InProgress` 是**合法**的：`can_transition_to` 里有
+        // `(_, Self::InProgress)`，`reset()` 靠它从任意阶段重开。所以这里
+        // 不该报错——这条断言是"确认设计意图"，不是"确认非法"。
+        engine
+            .transition_to(Phase::InProgress)
+            .expect("重置回进行中必须允许，reset() 依赖它");
+
+        // 进入 Won 之后，Won -> Lost 不合法
+        let target = engine.target();
+        let _ = guess(&mut engine, Value::from(target));
+        assert_eq!(engine.phase(), "won");
+        assert!(engine.transition_to(Phase::Lost).is_err());
+        assert_eq!(engine.phase(), "won", "状态不该被改坏");
+    }
+
+    /// **任意阶段都能重置回进行中**——这是 `reset()` 依赖的那条。
+    ///
+    /// 如果这条被当成非法（比如写成只允许 `InProgress -> InProgress`），
+    /// "再玩一局"会坏掉。
+    #[test]
+    fn any_phase_can_reset_back_to_in_progress() {
+        // 从 Won 重置
+        let mut engine = engine();
+        let target = engine.target();
+        let _ = guess(&mut engine, Value::from(target));
+        assert_eq!(engine.phase(), "won");
+        engine
+            .handle_action("start", ActionParams::default())
+            .unwrap();
+        assert_eq!(engine.phase(), "in_progress", "赢过之后必须能重开");
+
+        // 从 Lost 重置
+        let wrong = |e: &GuessNumberEngine| {
+            let target = e.target();
+            if target == e.min() {
+                target + 1
+            } else {
+                target - 1
+            }
+        };
+        let mut lost_engine = engine_with(serde_json::json!({
+            "min_num": 1, "max_num": 2, "max_attempts": 1
+        }))
+        .unwrap();
+        let bad = wrong(&lost_engine);
+        let _ = guess(&mut lost_engine, Value::from(bad));
+        assert_eq!(lost_engine.phase(), "lost", "机会用完应当判负");
+        lost_engine
+            .handle_action("start", ActionParams::default())
+            .unwrap();
+        assert_eq!(lost_engine.phase(), "in_progress", "输过之后必须能重开");
+    }
+
+    /// 单人是单人游戏：永远不该自报"大厅态"。
+    ///
+    /// `waiting_phase()` 的默认值是 `"waiting"`，但单人的 `phase()` 里从来
+    /// 不会出现它——这正是 `lobby.rs` 不会把单人局并桌的原因。
+    #[test]
+    fn a_single_player_game_never_declares_a_lobby_phase() {
+        let engine = engine();
+        assert_ne!(
+            engine.phase(),
+            engine.waiting_phase(),
+            "单人游戏不该停在大厅态"
+        );
     }
 }

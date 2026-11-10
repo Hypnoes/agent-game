@@ -238,3 +238,142 @@ fn the_registry_is_shared_and_cheap_to_clone() {
     assert_eq!(cloned.len(), registry.len());
     assert!(cloned.contains("liars_dice"));
 }
+
+/// 大厅态叫别的名字，也照样能并桌。
+///
+/// 这条守的是"**零改动加一个新游戏**"这个能力：`lobby.rs` 必须按引擎
+/// **自报**的阶段名判断大厅态，而不是写死 `"waiting"`。
+///
+/// 改前 `lobby.rs:84` 是 `engine.phase() == "waiting"`——一个把大厅态叫
+/// `"lobby"` 的新引擎永远不会被并桌，每次匹配都开新局。症状与
+/// `player_count` 丢失那次一样（玩家分散），但原因完全不同。
+#[tokio::test]
+async fn a_game_with_its_own_lobby_name_still_matches() {
+    let mut registry = Registry::new();
+    registry.register(GameMeta::new(
+        "custom_lobby",
+        PlayerMode::Multi,
+        |_p, _c| {
+            Ok(Box::new(
+                DummyEngine::new("custom_lobby")
+                    .with_phase("lobby")
+                    .with_waiting_phase("lobby"),
+            ) as BoxedEngine)
+        },
+    ));
+    let manager = GameManager::new(registry, Config::default());
+
+    let first = manager
+        .create("custom_lobby", params(json!({})), Instant::now())
+        .await
+        .unwrap();
+    let second = manager
+        .create("custom_lobby", params(json!({})), Instant::now())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        first.id, second.id,
+        "大厅态叫 lobby 的引擎也必须能并桌——判据是自报的名字，不是写死的 waiting"
+    );
+}
+
+/// 反证：引擎停在大厅态之外的阶段时**不该**被并桌。
+///
+/// 没有这条，上一条可能被"总是并桌"的错误实现蒙混通过。
+#[tokio::test]
+async fn a_table_not_in_its_lobby_phase_is_not_reused() {
+    let mut registry = Registry::new();
+    registry.register(GameMeta::new(
+        "custom_lobby",
+        PlayerMode::Multi,
+        |_p, _c| {
+            // 阶段是 `lobby`，但自报的大厅名是 `waiting`——两者不相等，不该并桌
+            Ok(Box::new(
+                DummyEngine::new("custom_lobby")
+                    .with_phase("lobby")
+                    .with_waiting_phase("waiting"),
+            ) as BoxedEngine)
+        },
+    ));
+    let manager = GameManager::new(registry, Config::default());
+
+    let first = manager
+        .create("custom_lobby", params(json!({})), Instant::now())
+        .await
+        .unwrap();
+    let second = manager
+        .create("custom_lobby", params(json!({})), Instant::now())
+        .await
+        .unwrap();
+
+    assert_ne!(first.id, second.id, "阶段名与自报的大厅名不一致时不该并桌");
+}
+
+/// 引擎自报的大厅名与**当前阶段**相同，但已经结束 → 不该并桌。
+///
+/// 守的是 `lobby.rs` 里的 `&& !engine.is_finished()`。没有它，一个"阶段名
+/// 恰好等于大厅名、但其实已经打完"的对局会被复用，新玩家加进一局死局。
+///
+/// 构造方式：把 `finished_states` 与 `waiting_phase` 都设成 `"lobby"`，
+/// 阶段也是 `"lobby"`——于是 `phase() == waiting_phase()` 成立，
+/// 但 `is_finished()` 也成立。只有 `&& !is_finished()` 能挡住它。
+#[tokio::test]
+async fn a_finished_table_is_not_reused_even_if_it_looks_like_a_lobby() {
+    let mut registry = Registry::new();
+    registry.register(GameMeta::new("odd_game", PlayerMode::Multi, |_p, _c| {
+        Ok(Box::new(
+            DummyEngine::new("odd_game")
+                .with_phase("lobby")
+                .with_waiting_phase("lobby")
+                .finished_states_are(&["lobby"]),
+        ) as BoxedEngine)
+    }));
+    let manager = GameManager::new(registry, Config::default());
+
+    let first = manager
+        .create("odd_game", params(json!({})), Instant::now())
+        .await
+        .unwrap();
+    let second = manager
+        .create("odd_game", params(json!({})), Instant::now())
+        .await
+        .unwrap();
+
+    assert_ne!(
+        first.id, second.id,
+        "已结束的对局即使阶段名等于大厅名，也不该被复用"
+    );
+}
+
+/// `waiting_phase()` 的默认值必须是 `"waiting"`。
+///
+/// 这条守 trait 的默认实现：多数多人游戏的自报值是它，改了会让所有
+/// 没覆盖这个方法的引擎失去并桌能力。
+#[tokio::test]
+async fn the_default_waiting_phase_is_waiting() {
+    let mut registry = Registry::new();
+    registry.register(GameMeta::new(
+        "default_lobby",
+        PlayerMode::Multi,
+        |_p, _c| {
+            // 不调 `with_waiting_phase`，用 trait 默认值
+            Ok(Box::new(DummyEngine::new("default_lobby").with_phase("waiting")) as BoxedEngine)
+        },
+    ));
+    let manager = GameManager::new(registry, Config::default());
+
+    let first = manager
+        .create("default_lobby", params(json!({})), Instant::now())
+        .await
+        .unwrap();
+    let second = manager
+        .create("default_lobby", params(json!({})), Instant::now())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        first.id, second.id,
+        "没有覆盖 waiting_phase 的引擎应当用默认的 \"waiting\" 并桌"
+    );
+}
