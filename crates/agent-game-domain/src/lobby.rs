@@ -81,7 +81,9 @@ impl GameManager {
                     continue;
                 }
                 let engine = session.engine.lock().await;
-                let waiting = engine.phase() == "waiting" && !engine.is_finished();
+                // 大厅态名由引擎自报，框架不写死 `"waiting"`——否则一个把大厅态
+                // 叫别的名字的新引擎永远匹配不上，每次匹配都开新局。
+                let waiting = engine.phase() == engine.waiting_phase() && !engine.is_finished();
                 drop(engine);
                 if waiting && compatible(&session.setup, &setup) {
                     return Ok(Arc::clone(session));
