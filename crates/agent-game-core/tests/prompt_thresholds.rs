@@ -28,7 +28,7 @@ fn dice_started(player_count: usize) -> (LiarsDiceEngine, Vec<String>) {
             .unwrap();
     }
     let tokens = engine
-        .players
+        .players()
         .iter()
         .map(|player| player.token.clone())
         .collect();
@@ -339,7 +339,7 @@ fn join_with_a_token_that_matches_nobody_still_adds_a_player() {
         .handle_action("join", ActionParams::new(raw))
         .unwrap();
 
-    assert_eq!(engine.players.len(), 1, "陌生 token 应该新增玩家");
+    assert_eq!(engine.players().len(), 1, "陌生 token 应该新增玩家");
     assert_eq!(engine.phase(), "waiting");
 }
 
@@ -354,5 +354,5 @@ fn join_with_an_empty_token_is_treated_as_a_new_player() {
         .handle_action("join", ActionParams::new(raw))
         .unwrap();
 
-    assert_eq!(engine.players.len(), 1);
+    assert_eq!(engine.players().len(), 1);
 }

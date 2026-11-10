@@ -14,6 +14,7 @@
 use std::time::Instant;
 
 use agent_game_server_core::games::LiarsDiceEngine;
+use agent_game_server_core::games::liars_dice::HistoryEvent;
 use agent_game_server_core::{ActionParams, Config, CreateParams, GameEngine};
 use rand::RngExt as _;
 use rand::SeedableRng as _;
@@ -33,7 +34,7 @@ fn engine(player_count: usize, dice_per_player: usize) -> (LiarsDiceEngine, Vec<
             .unwrap();
     }
     let tokens = engine
-        .players
+        .players()
         .iter()
         .map(|player| player.token.clone())
         .collect();
@@ -135,9 +136,13 @@ fn a_game_reaches_finished_for_every_player_count_and_seed() {
             );
             assert!(steps < 400, "对局没有收敛");
             let winner = engine.winner().expect("必须有赢家");
-            assert!(engine.players[winner].alive);
+            assert!(engine.players()[winner].is_alive());
             assert_eq!(
-                engine.players.iter().filter(|player| player.alive).count(),
+                engine
+                    .players()
+                    .iter()
+                    .filter(|player| player.is_alive())
+                    .count(),
                 1,
                 "只剩一名存活玩家"
             );
@@ -214,7 +219,8 @@ fn nobody_can_act_out_of_turn_in_a_full_game() {
             break;
         }
         let turn = engine.current_turn();
-        let Some(other) = (0..3).find(|index| *index != turn && engine.players[*index].alive)
+        let Some(other) =
+            (0..3).find(|index| *index != turn && engine.players()[*index].is_alive())
         else {
             break;
         };
@@ -255,10 +261,10 @@ fn the_winner_is_the_last_player_with_dice() {
         play_until_finished(&mut engine, &tokens, &mut rng, false, 400);
 
         let winner = engine.winner().expect("必须有赢家");
-        assert!(!engine.players[winner].dice.is_empty(), "赢家必须有骰子");
-        for (index, player) in engine.players.iter().enumerate() {
+        assert!(!engine.players()[winner].dice.is_empty(), "赢家必须有骰子");
+        for (index, player) in engine.players().iter().enumerate() {
             if index != winner {
-                assert!(!player.alive, "只有赢家存活");
+                assert!(!player.is_alive(), "只有赢家存活");
             }
         }
     }
@@ -332,7 +338,7 @@ fn the_prompt_never_leaks_opponent_dice() {
         for index in 0..3 {
             let others: Vec<i64> = (0..3)
                 .filter(|other| *other != index)
-                .flat_map(|other| engine.players[other].dice.clone())
+                .flat_map(|other| engine.players()[other].dice.clone())
                 .collect();
             let view = engine.player_view(Some(index)).unwrap();
             if view.private.get("all_dice").is_some() {
@@ -356,16 +362,41 @@ fn join_then_play_produces_a_stable_call_history() {
     let mut rng = ChaCha8Rng::seed_from_u64(77);
     play_until_finished(&mut engine, &tokens, &mut rng, false, 400);
 
-    // 历史里每条记录都必须能指向一名真实玩家，且开盅/超时记录的 quantity 为 0
-    for call in engine.call_history() {
-        assert!(call.player_idx < engine.players.len());
-        if call.is_bid() {
-            assert!((1..=6).contains(&call.face));
-            assert!(call.quantity >= 1);
-        } else {
-            assert_eq!(call.quantity, 0);
-            assert_ne!(call.message, "", "叫数消息不该为空");
+    // 历史里每条记录都必须能指向一名真实玩家。
+    // 叫数必须是合法值；开盅与超时**根本没有** quantity/face 字段——
+    // 这是枚举相对于"哨兵值 0"的好处：写不出"非叫数却有数量"这种状态。
+    for event in engine.call_history() {
+        assert!(
+            event.player_idx() < engine.players().len(),
+            "历史记录的玩家索引必须有效: {event:?}"
+        );
+        match event {
+            HistoryEvent::Bid(bid) => {
+                assert!((1..=6).contains(&bid.face), "面值越界: {bid:?}");
+                assert!(bid.quantity >= 1, "叫数数量必须 ≥ 1: {bid:?}");
+                // `message` 是可选参数（`optional_str("message").unwrap_or("")`），
+                // 允许为空——这不是缺陷，是设计。
+            }
+            HistoryEvent::Challenge {
+                actual,
+                face,
+                message,
+                ..
+            } => {
+                assert!((0..=6).contains(actual), "实际数量越界: {actual}");
+                assert!((1..=6).contains(face), "面值越界: {face}");
+                assert!(!message.is_empty(), "开盅消息不该为空");
+            }
+            HistoryEvent::TurnTimeout { message, .. } => {
+                assert!(!message.is_empty(), "超时消息不该为空");
+            }
         }
+        // 只有叫数才有 quantity/face
+        assert_eq!(
+            event.quantity_and_face().is_some(),
+            matches!(event, HistoryEvent::Bid(_)),
+            "quantity_and_face 应当只对叫数返回 Some: {event:?}"
+        );
     }
     let _ = json!({});
 }

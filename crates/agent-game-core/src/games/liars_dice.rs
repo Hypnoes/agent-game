@@ -45,12 +45,27 @@ fn shared_prompts() -> &'static PromptStore {
 }
 
 /// 一名玩家。
+///
+/// # 为什么 `alive` 是私有字段而不是从 `dice` 派生
+///
+/// 规则是"骰子掉光即出局"，但**还没发骰**也是零骰——两者不同。
+/// `Player::new` 造出来时 `dice` 是空的、`alive` 是 `true`；`start_game()`
+/// 只给 `alive` 的玩家发骰。如果把 `alive` 改写成
+/// `!dice.is_empty()`，新玩家会被判成出局，`start_game` 跳过所有人，
+/// 对局永远开不了。
+///
+/// 所以保留这个字段，但**私有化**：只允许 `eliminate()` / `start_game()`
+/// 通过本模块的路径修改。这样"存了两个真相"的危害从"外部可以随手改"降成
+/// "模块内部要保证一致"——后者是有测试盯着的。
+///
+/// 想彻底单真相需要 `dice: Option<Vec<i64>>`（`None` = 未发骰），那会扩散到
+/// 每一处读 `dice` 的地方，属于独立一轮重构（见 `docs/issues/008`）。
 #[derive(Clone, Debug)]
 pub struct Player {
     pub name: String,
     pub token: String,
     pub dice: Vec<i64>,
-    pub alive: bool,
+    alive: bool,
 }
 
 impl Player {
@@ -62,6 +77,15 @@ impl Player {
             alive: true,
         }
     }
+
+    /// 是否还在场上。
+    ///
+    /// 未发骰的新玩家也是"在场上"（`dice` 空但 `alive` 为真），
+    /// 因此**不能**用 `!dice.is_empty()` 代替。
+    #[must_use]
+    pub fn is_alive(&self) -> bool {
+        self.alive
+    }
 }
 
 impl agent_game_server_infra::identity::PlayerIdentity for Player {
@@ -70,17 +94,22 @@ impl agent_game_server_infra::identity::PlayerIdentity for Player {
     }
 }
 
-/// 一次叫数。
+/// 一次叫数。**只有叫数**——开盅与超时判负是别的事件，见 [`HistoryEvent`]。
+///
+/// 改前这里叫 `Call`，同时承载"叫数"与"历史记录"，用一个
+/// `quantity == 0` 的哨兵值区分两者（`Call::note`）。那是枚举被拆成 struct
+/// 的典型症状：用"业务上有意义的值"（0 颗骰子）编码"这是一个不同类型的事件",
+/// 于是每个消费点都得先 `.filter(|c| c.is_bid())` 才知道自己在看什么。
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Call {
+pub struct Bid {
     pub player_idx: usize,
     pub quantity: i64,
     pub face: i64,
     pub message: String,
 }
 
-impl Call {
-    fn bid(player_idx: usize, quantity: i64, face: i64, message: String) -> Self {
+impl Bid {
+    fn new(player_idx: usize, quantity: i64, face: i64, message: String) -> Self {
         Self {
             player_idx,
             quantity,
@@ -88,20 +117,62 @@ impl Call {
             message,
         }
     }
+}
 
-    /// 非叫数的历史记录（开盅、超时判负），`quantity == 0` 是标记。
-    fn note(player_idx: usize, message: String) -> Self {
-        Self {
-            player_idx,
-            quantity: 0,
-            face: 0,
-            message,
+/// 历史里的一条记录。叫数、开盅、超时判负是三类**不同的事件**，由类型区分。
+///
+/// 消费点不再需要 `.filter(is_bid)`——`filter_map` 出 `Bid` 就只可能是叫数，
+/// 类型系统保证。改前那个哨兵值方案下，`call_history` 里既有叫数又有开盅，
+/// 而所有"只看叫数"的地方都靠一个 `quantity > 0` 的手写判断。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HistoryEvent {
+    /// 某个玩家叫了一次数。
+    Bid(Bid),
+    /// 某个玩家开了上一手盅。
+    Challenge {
+        player_idx: usize,
+        actual: i64,
+        face: i64,
+        message: String,
+    },
+    /// 某个玩家回合超时判负。
+    TurnTimeout { player_idx: usize, message: String },
+}
+
+impl HistoryEvent {
+    /// 这条记录对应的玩家。
+    #[must_use]
+    pub fn player_idx(&self) -> usize {
+        match self {
+            Self::Bid(bid) => bid.player_idx,
+            Self::Challenge { player_idx, .. } | Self::TurnTimeout { player_idx, .. } => {
+                *player_idx
+            }
         }
     }
 
+    /// 是叫数就取出它。
     #[must_use]
-    pub fn is_bid(&self) -> bool {
-        self.quantity > 0
+    pub fn as_bid(&self) -> Option<&Bid> {
+        match self {
+            Self::Bid(bid) => Some(bid),
+            Self::Challenge { .. } | Self::TurnTimeout { .. } => None,
+        }
+    }
+
+    /// 给人看的文字。
+    #[must_use]
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Bid(bid) => &bid.message,
+            Self::Challenge { message, .. } | Self::TurnTimeout { message, .. } => message,
+        }
+    }
+
+    /// 该条记录的 `(quantity, face)`；非叫数返回 `None`。
+    #[must_use]
+    pub fn quantity_and_face(&self) -> Option<(i64, i64)> {
+        self.as_bid().map(|bid| (bid.quantity, bid.face))
     }
 }
 
@@ -112,10 +183,10 @@ pub struct LiarsDiceEngine {
     player_count: usize,
     dice_per_player: usize,
     phase: &'static str,
-    pub players: Vec<Player>,
+    players: Vec<Player>,
     current_turn: usize,
-    current_call: Option<Call>,
-    call_history: Vec<Call>,
+    current_call: Option<Bid>,
+    call_history: Vec<HistoryEvent>,
     winner: Option<usize>,
     loser: Option<usize>,
     last_action: Instant,
@@ -174,6 +245,24 @@ impl LiarsDiceEngine {
         self.player_count
     }
 
+    /// 玩家名。索引查不到时返回 `"?"`。
+    ///
+    /// 收掉之前散在 5 处的 `map_or("?", |p| p.name.as_str())`。索引由引擎自己
+    /// 维护，正常路径下必然有效；`"?"` 只是末日兜底，不是预期状态。
+    fn player_name(&self, index: usize) -> &str {
+        self.players.get(index).map_or("?", |p| p.name.as_str())
+    }
+
+    /// 全部玩家（只读）。
+    ///
+    /// `players` 字段是私有的：之前是 `pub`，测试里直接
+    /// `engine.players[1].alive = false` 就把一个还带着骰子的玩家标成出局，
+    /// 绕过所有不变量。只读访问器让"看"和"改"分开——改要走引擎自己的方法。
+    #[must_use]
+    pub fn players(&self) -> &[Player] {
+        &self.players
+    }
+
     #[must_use]
     pub fn dice_per_player(&self) -> usize {
         self.dice_per_player
@@ -191,10 +280,51 @@ impl LiarsDiceEngine {
     /// 生产路径永远不调它，所以标 `#[doc(hidden)]` 而不是藏成私有。
     #[doc(hidden)]
     pub fn set_dice(&mut self, faces: Vec<Vec<i64>>) {
+        // 只允许在未结束时摆骰子：`finished` 之后 `winner` / `loser` 已经定下，
+        // 再改骰子会让"谁是赢家"与"谁还活着"对不上（review 指出）。
+        if self.is_finished() {
+            return;
+        }
         if faces.len() == self.players.len() {
             for (player, dice) in self.players.iter_mut().zip(faces) {
+                player.alive = Self::alive_after_dealing(self.phase, &dice);
                 player.dice = dice;
             }
+        }
+    }
+
+    /// 摆完骰子之后 `alive` 该是什么。
+    ///
+    /// 关键区分：**零骰不等于出局**。
+    ///
+    /// - 开局前（`waiting`）：骰子必然是空的，那是"还没发骰"，玩家仍在场
+    /// - 开局后：骰子掉光才是出局
+    ///
+    /// `set_dice` / `set_player_dice` 都走这一个判断，语义统一。改前
+    /// `set_dice` 只改骰子、`set_player_dice` 顺带改 `alive`，两个测试入口
+    /// 的语义不一致（review 指出）。
+    fn alive_after_dealing(phase: &str, dice: &[i64]) -> bool {
+        phase == "waiting" || !dice.is_empty()
+    }
+
+    /// 直接摆某个玩家的骰子。同样只给测试用。
+    ///
+    /// `alive` 与全场版本的 [`Self::set_dice`] 走同一个判断
+    /// （[`Self::alive_after_dealing`]）：开局前空骰不算出局，开局后骰子掉光才出局。
+    ///
+    /// **这是 `alive` 唯一的写入口之一**——它是私有字段，外部改不动。
+    #[doc(hidden)]
+    pub fn set_player_dice(&mut self, player_index: usize, dice: Vec<i64>) {
+        // 同 `set_dice`：对局已结束后不许再摆
+        if self.is_finished() {
+            return;
+        }
+        let phase = self.phase;
+        // 先算再借用 `players`，避免同一个表达式里既读 self 又可变借用
+        let alive = Self::alive_after_dealing(phase, &dice);
+        if let Some(player) = self.players.get_mut(player_index) {
+            player.alive = alive;
+            player.dice = dice;
         }
     }
 
@@ -220,12 +350,12 @@ impl LiarsDiceEngine {
     }
 
     #[must_use]
-    pub fn current_call(&self) -> Option<&Call> {
+    pub fn current_call(&self) -> Option<&Bid> {
         self.current_call.as_ref()
     }
 
     #[must_use]
-    pub fn call_history(&self) -> &[Call] {
+    pub fn call_history(&self) -> &[HistoryEvent] {
         &self.call_history
     }
 
@@ -249,7 +379,7 @@ impl LiarsDiceEngine {
     pub fn total_dice(&self) -> i64 {
         self.players
             .iter()
-            .filter(|player| player.alive)
+            .filter(|player| player.is_alive())
             .map(|player| i64::try_from(player.dice.len()).unwrap_or(i64::MAX))
             .sum()
     }
@@ -270,7 +400,7 @@ impl LiarsDiceEngine {
         self.players
             .iter()
             .enumerate()
-            .filter(|(_, player)| player.alive)
+            .filter(|(_, player)| player.is_alive())
             .map(|(index, _)| index)
             .collect()
     }
@@ -283,7 +413,7 @@ impl LiarsDiceEngine {
         }
         for step in 1..=count {
             let index = (player_index + step) % count;
-            if self.players[index].alive {
+            if self.players[index].is_alive() {
                 return index;
             }
         }
@@ -293,7 +423,7 @@ impl LiarsDiceEngine {
 
     /// 本轮输家先叫下一轮；若他已被淘汰，则顺延到下一位存活玩家。
     fn next_turn_after(&self, player_index: usize) -> usize {
-        if self.players.get(player_index).is_some_and(|p| p.alive) {
+        if self.players.get(player_index).is_some_and(Player::is_alive) {
             return player_index;
         }
         self.next_alive_index(player_index)
@@ -332,7 +462,7 @@ impl LiarsDiceEngine {
         let Some(player) = self.players.get(player_index) else {
             return Err(EngineError::NotFound(player_index.to_string()));
         };
-        if !player.alive {
+        if !player.is_alive() {
             return Err(EngineError::invalid(format!(
                 "玩家 {player_index} 已出局，不能行动"
             )));
@@ -368,8 +498,8 @@ impl LiarsDiceEngine {
     }
 
     /// 新叫数是否比上一手大。
-    fn is_valid_bid(previous: Option<&Call>, new_quantity: i64, new_face: i64) -> bool {
-        let Some(previous) = previous.filter(|call| call.is_bid()) else {
+    fn is_valid_bid(previous: Option<&Bid>, new_quantity: i64, new_face: i64) -> bool {
+        let Some(previous) = previous else {
             return true;
         };
         if new_face == 1 && previous.face != 1 {
@@ -385,7 +515,7 @@ impl LiarsDiceEngine {
     fn start_game(&mut self) {
         let mut rng = rand::rng();
         for player in &mut self.players {
-            player.dice = if player.alive {
+            player.dice = if player.is_alive() {
                 (0..self.dice_per_player)
                     .map(|_| rng.random_range(1..=6))
                     .collect()
@@ -462,9 +592,9 @@ impl LiarsDiceEngine {
             )));
         }
 
-        let call = Call::bid(player_index, quantity, face, message);
-        self.current_call = Some(call.clone());
-        self.call_history.push(call);
+        let bid = Bid::new(player_index, quantity, face, message);
+        self.current_call = Some(bid.clone());
+        self.call_history.push(HistoryEvent::Bid(bid));
         self.current_turn = self.next_alive_index(player_index);
         self.last_action = Instant::now();
         self.signal.notify();
@@ -487,10 +617,12 @@ impl LiarsDiceEngine {
             call.player_idx
         };
 
-        self.call_history.push(Call::note(
-            player_index,
-            format!("开！(实际 {actual} 个 {})", call.face),
-        ));
+        self.call_history.push(HistoryEvent::Challenge {
+            player_idx: player_index,
+            actual,
+            face: call.face,
+            message: format!("开！(实际 {actual} 个 {})", call.face),
+        });
         self.current_call = None;
         self.loser = Some(loser);
         self.last_action = Instant::now();
@@ -512,7 +644,7 @@ impl LiarsDiceEngine {
         // 先算存活人数：下面要可变借用 `players`，同一个表达式里不能再读 self
         let sudden_death = self.alive_indices().len() <= 2;
         if let Some(player) = self.players.get_mut(player_index)
-            && player.alive
+            && player.is_alive()
         {
             if sudden_death {
                 player.dice.clear();
@@ -561,15 +693,22 @@ impl LiarsDiceEngine {
             "current_call": current_call,
             "last_message": self.current_call.as_ref().map_or("", |call| call.message.as_str()),
             "players": self.players.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
-            "alive": self.players.iter().map(|p| p.alive).collect::<Vec<_>>(),
+            "alive": self.players.iter().map(Player::is_alive).collect::<Vec<_>>(),
             "dice_per_player": self.dice_per_player,
-            "call_history": self.call_history.iter().map(|call| serde_json::json!({
-                "player": call.player_idx,
-                "player_name": self.players.get(call.player_idx).map_or("?", |p| p.name.as_str()),
-                "quantity": call.quantity,
-                "face": call.face,
-                "message": call.message,
-            })).collect::<Vec<_>>(),
+            "call_history": self.call_history.iter().map(|event| {
+                let idx = event.player_idx();
+                // 非叫数（开盅、超时）没有 quantity/face，序列化成 0 ——
+                // 这是**对外 JSON 契约**的一部分，改前用哨兵值也是 0，
+                // 所以下游（admin 页面、Agent prompt）看到的东西不变。
+                let (quantity, face) = event.quantity_and_face().unwrap_or((0, 0));
+                serde_json::json!({
+                    "player": idx,
+                    "player_name": self.player_name(idx),
+                    "quantity": quantity,
+                    "face": face,
+                    "message": event.message(),
+                })
+            }).collect::<Vec<_>>(),
         })
     }
 
@@ -604,8 +743,7 @@ impl LiarsDiceEngine {
                             "call_history",
                             self.call_history
                                 .iter()
-                                .filter(|call| call.is_bid())
-                                .map(|call| (call.quantity, call.face))
+                                .filter_map(HistoryEvent::quantity_and_face)
                                 .collect::<Vec<_>>(),
                         ),
                 )
@@ -871,8 +1009,10 @@ impl GameEngine for LiarsDiceEngine {
             // 超时与开盅同样是"输掉本轮"：本轮叫数必须清零。留着上一手的叫数，
             // 下家既不能加码（可能已超过场上骰子总数）也不能弃权，只能替别人开盅。
             if self.current_call.is_some() {
-                self.call_history
-                    .push(Call::note(loser, "超时判负（本轮作废）".to_owned()));
+                self.call_history.push(HistoryEvent::TurnTimeout {
+                    player_idx: loser,
+                    message: "超时判负（本轮作废）".to_owned(),
+                });
             }
             self.current_call = None;
 
@@ -1464,8 +1604,12 @@ mod tests {
             .check_timeout(Instant::now() + engine.turn_timeout() * 2)
             .unwrap();
         let last = engine.call_history().last().unwrap();
-        assert_eq!(last.quantity, 0);
-        assert!(last.message.contains("超时判负"), "{}", last.message);
+        assert!(
+            matches!(last, HistoryEvent::TurnTimeout { .. }),
+            "超时应当记一条 TurnTimeout，实际: {last:?}"
+        );
+        assert_eq!(last.quantity_and_face(), None, "超时不是叫数");
+        assert!(last.message().contains("超时判负"), "{}", last.message());
     }
 
     #[test]
@@ -1652,5 +1796,212 @@ mod tests {
             .handle_action("state", ActionParams::new(raw))
             .unwrap();
         assert_eq!(view.private["your_index"], 1);
+    }
+
+    // ═══════════════════════════════════════════
+    // HistoryEvent 的访问器
+    // ═══════════════════════════════════════════
+
+    /// 三个变体各自报出自己的玩家索引。
+    ///
+    /// 请守住 `player_idx()` 的 match——把它简化成只处理 `Bid`、或者返回常量，
+    /// 都会让"历史记录指向谁"这件事出错，而公开视图与提示词都靠它。
+    #[test]
+    fn every_history_variant_reports_its_player() {
+        let bid = HistoryEvent::Bid(Bid::new(2, 3, 4, "x".to_owned()));
+        let challenge = HistoryEvent::Challenge {
+            player_idx: 1,
+            actual: 5,
+            face: 6,
+            message: "开".to_owned(),
+        };
+        let timeout = HistoryEvent::TurnTimeout {
+            player_idx: 0,
+            message: "超时".to_owned(),
+        };
+
+        assert_eq!(bid.player_idx(), 2);
+        assert_eq!(challenge.player_idx(), 1);
+        assert_eq!(timeout.player_idx(), 0);
+    }
+
+    /// 只有 `Bid` 有 quantity/face；另外两个变体必须是 `None`。
+    ///
+    /// 请守住"枚举相对于哨兵值"这件事：改前用 `quantity == 0` 表示非叫数，
+    /// 于是"非叫数却有数量"这种状态是写不出来的——现在由类型保证。
+    #[test]
+    fn only_bids_carry_quantity_and_face() {
+        let bid = HistoryEvent::Bid(Bid::new(0, 3, 4, "x".to_owned()));
+        assert_eq!(bid.quantity_and_face(), Some((3, 4)));
+        assert!(bid.as_bid().is_some());
+
+        let challenge = HistoryEvent::Challenge {
+            player_idx: 1,
+            actual: 5,
+            face: 6,
+            message: "开".to_owned(),
+        };
+        assert_eq!(challenge.quantity_and_face(), None);
+        assert!(challenge.as_bid().is_none());
+
+        let timeout = HistoryEvent::TurnTimeout {
+            player_idx: 0,
+            message: "超时".to_owned(),
+        };
+        assert_eq!(timeout.quantity_and_face(), None);
+        assert!(timeout.as_bid().is_none());
+    }
+
+    /// 每个变体的 `message()` 都要能取到自己的文字。
+    #[test]
+    fn every_history_variant_reports_its_message() {
+        assert_eq!(
+            HistoryEvent::Bid(Bid::new(0, 1, 2, "叫".to_owned())).message(),
+            "叫"
+        );
+        assert_eq!(
+            HistoryEvent::Challenge {
+                player_idx: 0,
+                actual: 1,
+                face: 2,
+                message: "开".to_owned(),
+            }
+            .message(),
+            "开"
+        );
+        assert_eq!(
+            HistoryEvent::TurnTimeout {
+                player_idx: 0,
+                message: "超时".to_owned(),
+            }
+            .message(),
+            "超时"
+        );
+    }
+
+    // ═══════════════════════════════════════════
+    // player_name：收掉 5 处 map_or("?")
+    // ═══════════════════════════════════════════
+
+    // ═══════════════════════════════════════════
+    // 两个摆骰子入口的语义必须一致
+    // ═══════════════════════════════════════════
+
+    /// **开局前的零骰不是出局**。
+    ///
+    /// 这是 `alive` 与 `dice` 双真相最容易踩的地方：`Player::new` 造出来是
+    /// `dice: []` + `alive: true`（还没发骰），如果把 `alive` 改写成
+    /// `!dice.is_empty()`，新玩家会被判出局，`start_game` 跳过所有人。
+    #[test]
+    fn empty_dice_before_start_is_not_elimination() {
+        let mut engine =
+            LiarsDiceEngine::new(&CreateParams::default(), &Config::default()).unwrap();
+        let mut raw = serde_json::Map::new();
+        raw.insert("player_name".to_owned(), Value::from("Solo"));
+        engine
+            .handle_action("join", ActionParams::new(raw))
+            .unwrap();
+
+        // 大厅里骰子是空的，但玩家在场
+        assert_eq!(engine.players()[0].dice, Vec::<i64>::new());
+        assert!(
+            engine.players()[0].is_alive(),
+            "开局前的零骰是\"还没发骰\"，不是出局"
+        );
+
+        // 摆一个空骰也仍然是"在场"
+        engine.set_player_dice(0, Vec::new());
+        assert!(
+            engine.players()[0].is_alive(),
+            "set_player_dice 在开局前摆空骰不该把人标出局"
+        );
+    }
+
+    /// 开局后零骰才是出局，且两个入口给出同样的判断。
+    #[test]
+    fn both_dice_setters_agree_after_start() {
+        // 全场入口
+        let (mut whole, _tokens) = started(3, 2);
+        whole.set_dice(vec![vec![1, 2], Vec::new(), vec![3, 4]]);
+        assert!(whole.players()[0].is_alive());
+        assert!(
+            !whole.players()[1].is_alive(),
+            "开局后摆空骰 = 出局（全场入口）"
+        );
+        // 光断言 is_alive 不够：忘掉 `player.dice = dice` 这行时它仍是 false
+        // （因为构造时 dice 本来就空），测试会漏掉"骰子没被真正写进去"。
+        assert_eq!(
+            whole.players()[1].dice,
+            Vec::<i64>::new(),
+            "骰子内容要真的被写成空"
+        );
+        assert_eq!(whole.players()[0].dice, vec![1, 2], "别把别人的骰子改了");
+
+        // 单人入口
+        let (mut single, _tokens) = started(3, 2);
+        single.set_player_dice(1, Vec::new());
+        assert!(
+            !single.players()[1].is_alive(),
+            "开局后摆空骰 = 出局（单人入口）"
+        );
+        assert_eq!(
+            single.players()[1].dice,
+            Vec::<i64>::new(),
+            "骰子内容要真的被写成空"
+        );
+        assert!(single.players()[0].is_alive(), "没被动过的玩家仍在场");
+
+        // 单人入口：非空骰 -> 复活，且骰子内容真的写进去了
+        single.set_player_dice(1, vec![5, 6]);
+        assert!(
+            single.players()[1].is_alive(),
+            "摆回非空骰应当复活（与全场入口规则一致）"
+        );
+        assert_eq!(single.players()[1].dice, vec![5, 6], "骰子内容要真的写进去");
+    }
+
+    /// 对局结束后不许再摆骰子。
+    ///
+    /// 结束后 `winner` / `loser` 已经定下。若还允许改骰子，会出现
+    /// "赢家已定但赢家没骰子"或"某人还没出局但 winner 已经是他"这类
+    /// 自相矛盾的状态。两个入口都要挡住。
+    #[test]
+    fn dice_setters_refuse_after_the_game_finished() {
+        let (mut engine, tokens) = started(2, 1);
+        engine.set_dice(vec![vec![1], vec![2]]);
+        engine.set_current_turn(0);
+        bid(&mut engine, 0, &tokens[0], 1, 3).unwrap();
+        engine
+            .handle_action(
+                "challenge",
+                ActionParams::new({
+                    let mut raw = serde_json::Map::new();
+                    raw.insert("player_index".to_owned(), Value::from(1));
+                    raw.insert("player_token".to_owned(), Value::from(tokens[1].clone()));
+                    raw
+                }),
+            )
+            .unwrap();
+        assert_eq!(engine.phase(), "finished", "2 人局开盅后应当结束");
+
+        let before: Vec<Vec<i64>> = engine.players().iter().map(|p| p.dice.clone()).collect();
+        let winner = engine.winner();
+
+        // 两个入口都该被挡住
+        engine.set_dice(vec![vec![9, 9], vec![9, 9]]);
+        engine.set_player_dice(0, vec![9, 9]);
+
+        let after: Vec<Vec<i64>> = engine.players().iter().map(|p| p.dice.clone()).collect();
+        assert_eq!(after, before, "结束后摆骰子必须被忽略");
+        assert_eq!(engine.winner(), winner, "winner 不该受影响");
+    }
+
+    #[test]
+    fn player_name_returns_the_real_name() {
+        let (engine, _tokens) = started(2, 3);
+        assert_eq!(engine.player_name(0), engine.players()[0].name);
+        assert_eq!(engine.player_name(1), engine.players()[1].name);
+        // 越界只是末日兜底，不是预期状态
+        assert_eq!(engine.player_name(99), "?");
     }
 }

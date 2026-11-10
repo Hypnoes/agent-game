@@ -56,7 +56,7 @@ fn started(player_count: usize, dice_per_player: usize) -> (LiarsDiceEngine, Vec
             .unwrap();
     }
     let tokens = engine
-        .players
+        .players()
         .iter()
         .map(|player| player.token.clone())
         .collect();
@@ -105,10 +105,10 @@ fn set_dice_ignores_a_shape_that_does_not_match_the_players() {
     // 集成测试靠它摆骰子。形状对不上时静默忽略，而不是 panic 或只改一半——
     // 一个改了一半的棋盘会让后续断言给出错误的结论。
     let (mut engine, _) = started(2, 3);
-    let before: Vec<Vec<i64>> = engine.players.iter().map(|p| p.dice.clone()).collect();
+    let before: Vec<Vec<i64>> = engine.players().iter().map(|p| p.dice.clone()).collect();
 
     engine.set_dice(vec![vec![1, 1, 1]]);
-    let after: Vec<Vec<i64>> = engine.players.iter().map(|p| p.dice.clone()).collect();
+    let after: Vec<Vec<i64>> = engine.players().iter().map(|p| p.dice.clone()).collect();
     assert_eq!(before, after, "形状不匹配时不该改动任何玩家");
 }
 
@@ -116,8 +116,8 @@ fn set_dice_ignores_a_shape_that_does_not_match_the_players() {
 fn set_dice_applies_a_matching_shape() {
     let (mut engine, _) = started(2, 3);
     engine.set_dice(vec![vec![1, 2, 3], vec![4, 5, 6]]);
-    assert_eq!(engine.players[0].dice, vec![1, 2, 3]);
-    assert_eq!(engine.players[1].dice, vec![4, 5, 6]);
+    assert_eq!(engine.players()[0].dice, vec![1, 2, 3]);
+    assert_eq!(engine.players()[1].dice, vec![4, 5, 6]);
 }
 
 #[test]

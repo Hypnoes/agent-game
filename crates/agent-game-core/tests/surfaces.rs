@@ -14,6 +14,7 @@ use agent_game_server_core::{
     ActionParams, Config, CreateParams, EngineError, GameEngine, PlayerMode,
 };
 use serde_json::{Value, json};
+use std::time::Instant;
 
 fn guess_engine() -> GuessNumberEngine {
     GuessNumberEngine::new(&CreateParams::default(), &Config::default()).unwrap()
@@ -32,7 +33,7 @@ fn dice_engine() -> (LiarsDiceEngine, Vec<String>) {
             .unwrap();
     }
     let tokens = engine
-        .players
+        .players()
         .iter()
         .map(|player| player.token.clone())
         .collect();
@@ -100,8 +101,32 @@ fn the_guess_number_public_view_carries_the_game_progress() {
     assert_eq!(public["min"], 1);
     assert_eq!(public["max"], 100);
     assert_eq!(public["guess_count"], 1);
-    assert!(public["guesses"].is_array());
-    assert_eq!(public["guesses"].as_array().unwrap().len(), 1);
+
+    // 逐字段断言，不能只查 `is_array()` + 长度：把条目里的 `number` 或
+    // `result` 改成空值/错值，弱断言一样绿（review 指出）。
+    let guesses = public["guesses"].as_array().expect("guesses 应当是数组");
+    assert_eq!(guesses.len(), 1, "猜了一次就应当有一条记录");
+    let entry = &guesses[0];
+    assert_eq!(entry["number"], low, "记录里的数字应当就是刚猜的那个");
+    // 猜的是最小值，按**实际 target** 推出唯一预期结果——
+    // 不是"两值之一"那种弱断言（review 指出）。
+    let expected = if engine.target() == low {
+        "correct"
+    } else {
+        "too_low"
+    };
+    assert_eq!(
+        entry["result"],
+        expected,
+        "猜 {low} 而 target 是 {}，结果必须恰好是 {expected}",
+        engine.target()
+    );
+    // 毫秒时间戳是非负整数，不是"任意 number"（负数/小数都不合法）
+    assert!(
+        entry["at_ms"].as_u64().is_some(),
+        "at_ms 必须是非负整数，实际: {}",
+        entry["at_ms"]
+    );
 }
 
 #[test]
@@ -113,8 +138,231 @@ fn the_liars_dice_public_view_carries_the_table() {
     assert_eq!(public["players"], json!(["P0", "P1", "P2"]));
     assert_eq!(public["alive"], json!([true, true, true]));
     assert_eq!(public["dice_per_player"], 3);
-    assert!(public["current_turn"].is_number());
+    // 不只要"是数字"，还得是**有效玩家索引**——把它改成 99 也要能红
+    let turn = public["current_turn"]
+        .as_u64()
+        .expect("current_turn 应当是非负整数");
+    assert!(
+        (turn as usize) < engine.players().len(),
+        "current_turn 必须是有效玩家索引，收到 {turn}（共 {} 人）",
+        engine.players().len()
+    );
     assert!(public["call_history"].is_array());
+
+    // `current_call` 与 `last_message` 是 Agent 读的两个关键字段：
+    // 前者是"现在该加多少"，后者是"上一手说了什么"。开局无叫数时
+    // `current_call` 必须是 null（不是缺失、不是空对象）。
+    assert!(
+        public.get("current_call").is_some(),
+        "current_call 字段必须存在，实际字段: {:?}",
+        public.as_object().map(|o| o.keys().collect::<Vec<_>>())
+    );
+    assert!(
+        public["current_call"].is_null(),
+        "开局还没有人叫数，current_call 必须是 null，实际: {}",
+        public["current_call"]
+    );
+    assert_eq!(
+        public["last_message"], "",
+        "开局没有叫数时 last_message 应当是空串"
+    );
+}
+
+/// 有人叫数之后 `current_call` 必须是一个**完整对象**，`last_message` 与它一致。
+///
+/// review 指出：之前只断言了开局时 `current_call` 是 `null`，没有正向断言
+/// "叫数之后长什么样"。
+#[test]
+fn current_call_carries_the_live_bid_after_a_call() {
+    let (mut engine, tokens) = dice_engine();
+    engine.set_current_turn(0);
+    engine.set_dice(vec![vec![1, 2, 3], vec![4, 5, 6], vec![1, 1, 1]]);
+
+    let mut raw = serde_json::Map::new();
+    raw.insert("player_index".to_owned(), Value::from(0));
+    raw.insert("player_token".to_owned(), Value::String(tokens[0].clone()));
+    raw.insert("quantity".to_owned(), Value::from(2));
+    raw.insert("face".to_owned(), Value::from(3));
+    raw.insert("message".to_owned(), Value::String("加码".to_owned()));
+    engine.handle_action("bid", ActionParams::new(raw)).unwrap();
+
+    let public = engine.public_view();
+    let call = &public["current_call"];
+    assert!(call.is_object(), "叫数之后 current_call 必须是对象: {call}");
+    assert_eq!(call["player"], 0);
+    assert_eq!(call["player_name"], "P0");
+    assert_eq!(call["quantity"], 2);
+    assert_eq!(call["face"], 3);
+    // 注意：`current_call` 对象里**没有** `message` 字段——消息只出现在
+    // `last_message`（`current_call.map_or("", |c| c.message)`）。
+    // 我第一版在这里断言 `call["message"]`，测试红了：那不是"实现有 bug"，
+    // 是 JSON 契约本来就这样。
+    assert!(
+        call.get("message").is_none(),
+        "current_call 不含 message，消息在 last_message 里: {call}"
+    );
+    assert_eq!(
+        public["last_message"], "加码",
+        "last_message 必须等于当前叫数的消息"
+    );
+}
+
+/// `call_history` 的 JSON 形状是**对外契约**：admin 页面与 Agent prompt 都读它。
+///
+/// 变的是内部模型（`Call` 拆成 `Bid` + `HistoryEvent`），不变的必须是这个形状：
+/// 每条都是 `{player, player_name, quantity, face, message}`，非叫数
+/// （开盅、超时）的 `quantity` 与 `face` 都是 0。
+///
+/// 这条用例是 review 督促补的：之前只断言 `is_array()`，等于什么都没测——
+/// 改坏了字段名、或者非叫数不输出 `quantity: 0`，套件都不会红。
+/// `call_history` 的 JSON 形状是**对外契约**：admin 页面与 Agent prompt 都读它。
+///
+/// 变的是内部模型（`Call` 拆成 `Bid` + `HistoryEvent`），不变的必须是这个形状：
+/// 每条都是 `{player, player_name, quantity, face, message}`，非叫数
+/// （开盅、超时）的 `quantity` 与 `face` 都是 0。
+///
+/// 这条用例是 review 督促补的：之前只断言 `is_array()`，等于什么都没测——
+/// 改坏了字段名、或者非叫数不输出 `quantity: 0`，套件都不会红。
+#[test]
+fn every_history_entry_has_the_full_json_shape() {
+    let (mut engine, tokens) = dice_engine();
+    // 先手是随机的，固定成 0 才能断言"第一条是 P0 叫的"
+    engine.set_current_turn(0);
+    engine.set_dice(vec![vec![1, 2, 3], vec![4, 5, 6], vec![1, 1, 1]]);
+
+    // 叫数
+    let mut raw = serde_json::Map::new();
+    raw.insert("player_index".to_owned(), Value::from(0));
+    raw.insert("player_token".to_owned(), Value::String(tokens[0].clone()));
+    raw.insert("quantity".to_owned(), Value::from(2));
+    raw.insert("face".to_owned(), Value::from(3));
+    raw.insert("message".to_owned(), Value::String("叫一手".to_owned()));
+    engine.handle_action("bid", ActionParams::new(raw)).unwrap();
+
+    // 开盅
+    let mut raw = serde_json::Map::new();
+    raw.insert("player_index".to_owned(), Value::from(1));
+    raw.insert("player_token".to_owned(), Value::String(tokens[1].clone()));
+    engine
+        .handle_action("challenge", ActionParams::new(raw))
+        .unwrap();
+
+    let history = engine.public_view()["call_history"]
+        .as_array()
+        .expect("call_history 应当是数组")
+        .clone();
+    assert_eq!(history.len(), 2, "应当有一条叫数 + 一条开盅");
+
+    // 叫数
+    let bid_entry = &history[0];
+    assert_eq!(bid_entry["player"], 0);
+    assert_eq!(bid_entry["player_name"], "P0");
+    assert_eq!(bid_entry["quantity"], 2);
+    assert_eq!(bid_entry["face"], 3);
+    assert_eq!(bid_entry["message"], "叫一手");
+
+    // 开盅：quantity 与 face 都是 0，但字段**必须存在**
+    let challenge_entry = &history[1];
+    assert_eq!(challenge_entry["player"], 1);
+    assert_eq!(challenge_entry["player_name"], "P1");
+    assert_eq!(
+        challenge_entry["quantity"], 0,
+        "非叫数的 quantity 必须是 0（不是缺失）"
+    );
+    assert_eq!(
+        challenge_entry["face"], 0,
+        "非叫数的 face 必须是 0（不是缺失）"
+    );
+    // 骰子已经用 `set_dice` 固定成 `[1,2,3] / [4,5,6] / [1,1,1]`。
+    // 面值 3 的计数**包含百搭的 1**（`count_face` 里 `die == face || (die == 1 && face != 1)`）：
+    // 一张 3 + 两张 1 = 5。所以文案可以精确断言（review 指出）。
+    //
+    // 我第一版按"只有一张 3"写成 1，测试立刻红了——百搭规则得先数清楚。
+    assert_eq!(
+        challenge_entry["message"], "开！(实际 5 个 3)",
+        "开盅消息里的实际数量要把百搭的 1 算进去"
+    );
+
+    // 每条都必须有全部五个键
+    for (index, entry) in history.iter().enumerate() {
+        for key in ["player", "player_name", "quantity", "face", "message"] {
+            assert!(
+                entry.get(key).is_some(),
+                "第 {index} 条缺字段 {key}: {entry}"
+            );
+        }
+    }
+}
+
+/// `TurnTimeout` 的序列化分支与 `Challenge` 是**两段独立代码**。
+///
+/// 不能因为"开盅那条对"就认为超时那条也对——它们各自走 `HistoryEvent`
+/// 的不同 match 分支出 JSON。这条单独构造一条超时记录来钉它。
+///
+/// review 催补：上一条用例只造了 `Bid` + `Challenge`。
+#[test]
+fn a_timeout_entry_serialises_like_any_other_non_bid() {
+    let (mut engine, tokens) = dice_engine();
+    engine.set_current_turn(0);
+    engine.set_dice(vec![vec![1, 2, 3], vec![4, 5, 6], vec![1, 1, 1]]);
+
+    // 先叫一手，超时才有"本轮作废"的记录可写
+    let mut raw = serde_json::Map::new();
+    raw.insert("player_index".to_owned(), Value::from(0));
+    raw.insert("player_token".to_owned(), Value::String(tokens[0].clone()));
+    raw.insert("quantity".to_owned(), Value::from(1));
+    raw.insert("face".to_owned(), Value::from(2));
+    engine.handle_action("bid", ActionParams::new(raw)).unwrap();
+
+    // 超时的是"当前回合"那个玩家——先把他是谁记下来，
+    // 才能断言历史记录真的指向他（review 指出之前只断言了"是数字"）。
+    let timed_out = engine.current_turn();
+    let timed_out_name = engine.players()[timed_out].name.clone();
+    engine
+        .check_timeout(Instant::now() + engine.turn_timeout() * 2)
+        .unwrap();
+
+    let history = engine.public_view()["call_history"]
+        .as_array()
+        .expect("call_history 应当是数组")
+        .clone();
+    let timeout_entry = history
+        .iter()
+        .find(|entry| {
+            entry["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("超时判负"))
+        })
+        .expect("应当有一条超时记录");
+
+    // 精确断言：指向真正超时的那个人，不是"某个数字/某个字符串"
+    assert_eq!(
+        timeout_entry["player"],
+        serde_json::json!(timed_out),
+        "超时记录必须指向真正超时的玩家"
+    );
+    assert_eq!(
+        timeout_entry["player_name"],
+        serde_json::json!(timed_out_name),
+        "超时记录的玩家名必须是他"
+    );
+    // 消息是固定文案（`check_timeout` 里写死的），值得钉住
+    assert_eq!(
+        timeout_entry["message"], "超时判负（本轮作废）",
+        "超时消息是固定文案"
+    );
+    // 五个字段一个不少，且非叫数的两个数值字段是 0
+    for key in ["player", "player_name", "quantity", "face", "message"] {
+        assert!(
+            timeout_entry.get(key).is_some(),
+            "超时记录缺字段 {key}: {timeout_entry}"
+        );
+    }
+    assert_eq!(
+        timeout_entry["quantity"], 0,
+        "超时的 quantity 必须是 0（不是缺失）"
+    );
+    assert_eq!(timeout_entry["face"], 0, "超时的 face 必须是 0（不是缺失）");
 }
 
 #[test]
@@ -124,11 +372,35 @@ fn the_admin_view_is_a_superset_of_the_public_view() {
     let public = engine.public_view();
     let admin = engine.admin_view();
 
-    for key in ["phase", "players", "alive", "dice_per_player"] {
-        assert_eq!(public[key], admin[key], "字段 {key} 应一致");
+    // 逐个比较 `public_view` 的**全部**键，而不是手挑四个。
+    // 手挑的话，新增一个公共字段后这条断言不会红——它压根不看新字段。
+    let public_object = public.as_object().expect("public_view 应当是对象");
+    assert!(
+        public_object.len() >= 6,
+        "public_view 的字段数不该少（实际 {}）",
+        public_object.len()
+    );
+    for (key, value) in public_object {
+        assert_eq!(
+            &admin[key], value,
+            "公共字段 {key} 在 admin_view 里必须一致"
+        );
     }
-    assert!(admin.get("all_dice").is_some());
-    assert!(public.get("all_dice").is_none());
+    // `all_dice` 不只要存在，内容必须与引擎里真实的骰子一致
+    // （review 指出之前只断言了 `is_some()`）。
+    let all_dice = admin["all_dice"].as_array().expect("all_dice 应当是数组");
+    assert_eq!(all_dice.len(), engine.players().len(), "每个玩家一组骰子");
+    for (index, player) in engine.players().iter().enumerate() {
+        assert_eq!(
+            all_dice[index],
+            json!(player.dice),
+            "第 {index} 名玩家的骰子必须与 admin_view 一致"
+        );
+    }
+    assert!(
+        public.get("all_dice").is_none(),
+        "public_view 不许有 all_dice"
+    );
 }
 
 // ═══════════════════════════════════════════

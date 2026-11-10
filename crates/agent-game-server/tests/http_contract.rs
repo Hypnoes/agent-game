@@ -367,10 +367,20 @@ async fn the_player_view_needs_the_token_header() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(
-        body["private"]["your_dice"].is_array(),
-        "自己的骰子必须可见: {body}"
-    );
+
+    // 不只要"是数组"：`started_dice` 配的是 `dice_per_player: 3`，
+    // 所以必须是 3 个、每个都在 1..=6。把骰子数改成 0 或越界也要能红
+    // （review 指出这里原来只断言了 `is_array()`）。
+    let dice = body["private"]["your_dice"]
+        .as_array()
+        .unwrap_or_else(|| panic!("自己的骰子必须可见: {body}"));
+    assert_eq!(dice.len(), 3, "每人 3 颗骰子，实际: {dice:?}");
+    for face in dice {
+        let value = face
+            .as_i64()
+            .unwrap_or_else(|| panic!("骰子面必须是整数: {face}"));
+        assert!((1..=6).contains(&value), "骰子面必须在 1..=6，实际 {value}");
+    }
 }
 
 #[tokio::test]
@@ -470,8 +480,25 @@ async fn the_admin_list_uses_the_envelope() {
     let rows = body["games"].as_array().unwrap();
     assert_eq!(rows.len(), 1);
     // 信封：框架字段在顶层，引擎状态在 state 里
-    assert!(rows[0]["session_id"].is_string());
-    assert!(rows[0]["state"]["target"].is_number());
+    // TODO(#16)：`session_id` 应与 `manager.create()` 返回的精确比较，
+    // 不是"长度 ≥ 8"；`target` 应断言在 `1..=100` 而不是只 `is_number()`。
+    // 这两项是通用契约问题，不属于 #10 的建模范围。
+    let created_id = rows[0]["session_id"]
+        .as_str()
+        .expect("session_id 必须是字符串");
+    assert!(
+        created_id.len() >= 8,
+        "session_id 不该是空串或极短串，实际 {created_id:?}"
+    );
+    // `target` 是随机值，但**范围确定**（猜数字默认 1..=100）且必须是整数。
+    // 只断言 `is_number()` 会放过小数、负数、越界值（review 指出）。
+    let target = rows[0]["state"]["target"]
+        .as_i64()
+        .expect("target 必须是整数");
+    assert!(
+        (1..=100).contains(&target),
+        "猜数字的默认 target 必须在 1..=100，实际 {target}"
+    );
     assert!(
         rows[0].get("target").is_none(),
         "框架不能把引擎的键提到顶层"
