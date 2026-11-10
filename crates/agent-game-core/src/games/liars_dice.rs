@@ -2152,4 +2152,58 @@ mod tests {
         let err = engine.transition_to(Phase::Bidding).unwrap_err();
         assert!(matches!(err, EngineError::InvalidInput(_)));
     }
+
+    /// 错误消息里要带出**当前阶段名**（走 `Display for Phase`）。
+    ///
+    /// 变异测试发现：把 `fmt` 改成 `Ok(Default::default())`（输出空串）没有
+    /// 用例变红。`Display` 在两处错误分支里用，都没有覆盖到阶段名的具体值：
+    ///
+    /// - `check_turn` 的"游戏阶段是 {}，不能行动"
+    /// - `add_player` 的"对局已开始（{}），无法加入"
+    #[test]
+    fn error_messages_name_the_current_phase() {
+        // 分支一：对局已结束，还想行动 → "游戏阶段是 finished，不能行动"
+        let (mut engine, tokens) = started(2, 1);
+        engine.set_dice(vec![vec![1], vec![2]]);
+        engine.set_current_turn(0);
+        bid(&mut engine, 0, &tokens[0], 1, 3).unwrap();
+        engine
+            .handle_action(
+                "challenge",
+                ActionParams::new({
+                    let mut raw = serde_json::Map::new();
+                    raw.insert("player_index".to_owned(), Value::from(1));
+                    raw.insert("player_token".to_owned(), Value::from(tokens[1].clone()));
+                    raw
+                }),
+            )
+            .unwrap();
+        assert_eq!(engine.phase(), "finished");
+
+        let mut raw = serde_json::Map::new();
+        raw.insert("player_index".to_owned(), Value::from(0));
+        raw.insert("player_token".to_owned(), Value::from(tokens[0].clone()));
+        raw.insert("quantity".to_owned(), Value::from(1));
+        raw.insert("face".to_owned(), Value::from(2));
+        let err = engine
+            .handle_action("bid", ActionParams::new(raw))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("finished"),
+            "错误消息必须带出当前阶段名（finished），实际: {err}"
+        );
+
+        // 分支二：已开局后再 join → "对局已开始（bidding），无法加入"
+        let (mut engine2, _tokens) = started(2, 2);
+        assert_eq!(engine2.phase(), "bidding");
+        let mut raw = serde_json::Map::new();
+        raw.insert("player_name".to_owned(), Value::from("Late"));
+        let err = engine2
+            .handle_action("join", ActionParams::new(raw))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("bidding"),
+            "join 的错误消息也要带阶段名（bidding），实际: {err}"
+        );
+    }
 }

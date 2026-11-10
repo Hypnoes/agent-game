@@ -1031,4 +1031,24 @@ mod tests {
             .unwrap();
         assert_eq!(lost_engine.phase(), "in_progress", "输过之后必须能重开");
     }
+
+    /// 已结束之后再猜，错误消息里要带上**当前阶段名**。
+    ///
+    /// 这条守 `impl Display for Phase`。变异测试第一轮发现：把 `fmt` 改成
+    /// `Ok(Default::default())`（输出空串）没有用例变红——因为 `Display`
+    /// 只在这个错误分支里用，而那条分支一直没被覆盖。
+    #[test]
+    fn guessing_after_the_game_ended_names_the_current_phase() {
+        let mut engine = engine();
+        let target = engine.target();
+        let _ = guess(&mut engine, Value::from(target));
+        assert_eq!(engine.phase(), "won");
+
+        let err = guess(&mut engine, Value::from(target)).unwrap_err();
+        let text = err.to_string();
+        assert!(
+            text.contains("won"),
+            "错误消息必须带出当前阶段名（Display 的输出），实际: {text}"
+        );
+    }
 }
