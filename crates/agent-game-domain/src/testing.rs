@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-use crate::game::{DEFAULT_WAITING_PHASE, GameEngine, PlayerMode, PlayerView, TimeoutEvent};
+use crate::game::{GameEngine, PlayerMode, PlayerView, TimeoutEvent};
 use agent_game_server_infra::error::EngineError;
 use agent_game_server_infra::params::ActionParams;
 use agent_game_server_infra::prompt::PromptStore;
@@ -32,14 +32,6 @@ pub struct DummyEngine {
     explode: bool,
     /// 是否在第一次 `check_timeout` 后进入终态。
     finish_on_timeout: bool,
-    /// 自报的大厅态名。`None` = **不覆盖**，用 trait 的默认实现。
-    ///
-    /// 用 `Option` 而不是直接给个 `"waiting"` 字符串：那样 `DummyEngine`
-    /// 永远覆盖 trait 默认值，**默认实现就再也测不到了**——改坏默认值
-    /// （比如把 `"waiting"` 改成 `"finished"`）不会有任何用例变红。
-    waiting_phase: Option<&'static str>,
-    /// 自报的终结态名。默认 `["finished"]`。
-    finished_states: &'static [&'static str],
 }
 
 impl DummyEngine {
@@ -52,8 +44,6 @@ impl DummyEngine {
             signal: Arc::new(ChangeSignal::new()),
             explode: false,
             finish_on_timeout: false,
-            waiting_phase: None,
-            finished_states: &["finished"],
         }
     }
 
@@ -66,26 +56,6 @@ impl DummyEngine {
     #[must_use]
     pub fn with_player_mode(mut self, mode: PlayerMode) -> Self {
         self.player_mode = mode;
-        self
-    }
-
-    /// 自报一个不同的大厅态名。
-    ///
-    /// 用来证明 `lobby.rs` 真的按**引擎自报的名字**判断大厅态，而不是写死
-    /// `"waiting"`——后者会让"零改动加一个新游戏"不成立。
-    #[must_use]
-    pub fn with_waiting_phase(mut self, name: &'static str) -> Self {
-        self.waiting_phase = Some(name);
-        self
-    }
-
-    /// 自报一组终结态名。
-    ///
-    /// 用来构造"阶段名恰好等于大厅名、但其实已经结束"这种刁钻场景，
-    /// 验证 `lobby.rs` 的 `&& !is_finished()` 真的在起作用。
-    #[must_use]
-    pub fn finished_states_are(mut self, states: &'static [&'static str]) -> Self {
-        self.finished_states = states;
         self
     }
 
@@ -114,21 +84,11 @@ impl GameEngine for DummyEngine {
     }
 
     fn finished_states(&self) -> &'static [&'static str] {
-        self.finished_states
+        &["finished"]
     }
 
     fn phase(&self) -> &'static str {
         self.phase
-    }
-
-    fn waiting_phase(&self) -> &'static str {
-        // 没有覆盖时返回**默认常量**。
-        //
-        // 不能写 `GameEngine::waiting_phase(self)`——`Self` 是 `DummyEngine`，
-        // 那调回本方法，无限递归（实测 `STATUS_STACK_OVERFLOW`，把整个
-        // `routing` 测试二进制打崩）。Rust 没有"调用被覆盖的 trait 默认实现"
-        // 的语法，所以默认值必须抽成常量（`DEFAULT_WAITING_PHASE`）。
-        self.waiting_phase.unwrap_or(DEFAULT_WAITING_PHASE)
     }
 
     fn admin_view(&self) -> Value {

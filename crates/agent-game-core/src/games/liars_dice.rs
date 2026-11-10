@@ -937,10 +937,6 @@ impl GameEngine for LiarsDiceEngine {
         self.phase.as_str()
     }
 
-    fn waiting_phase(&self) -> &'static str {
-        Phase::Waiting.as_str()
-    }
-
     fn admin_view(&self) -> Value {
         let mut view = self.build_public_view();
         if let Value::Object(ref mut map) = view {
@@ -2155,17 +2151,5 @@ mod tests {
         // 自转移到同一状态也不合法：满员后再调一次开局应当报错
         let err = engine.transition_to(Phase::Bidding).unwrap_err();
         assert!(matches!(err, EngineError::InvalidInput(_)));
-    }
-
-    /// `waiting_phase()` 自报的名字要与 `phase()` 在大厅态时相等。
-    #[test]
-    fn the_waiting_phase_name_matches_the_lobby_state() {
-        let mut raw = serde_json::Map::new();
-        raw.insert("player_count".to_owned(), Value::from(2));
-        raw.insert("dice_per_player".to_owned(), Value::from(2));
-        let engine = LiarsDiceEngine::new(&CreateParams::new(raw), &Config::default()).unwrap();
-
-        assert_eq!(engine.phase(), engine.waiting_phase());
-        assert_eq!(engine.waiting_phase(), "waiting");
     }
 }

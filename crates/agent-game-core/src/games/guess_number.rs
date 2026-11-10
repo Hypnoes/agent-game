@@ -1031,18 +1031,4 @@ mod tests {
             .unwrap();
         assert_eq!(lost_engine.phase(), "in_progress", "输过之后必须能重开");
     }
-
-    /// 单人是单人游戏：永远不该自报"大厅态"。
-    ///
-    /// `waiting_phase()` 的默认值是 `"waiting"`，但单人的 `phase()` 里从来
-    /// 不会出现它——这正是 `lobby.rs` 不会把单人局并桌的原因。
-    #[test]
-    fn a_single_player_game_never_declares_a_lobby_phase() {
-        let engine = engine();
-        assert_ne!(
-            engine.phase(),
-            engine.waiting_phase(),
-            "单人游戏不该停在大厅态"
-        );
-    }
 }

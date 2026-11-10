@@ -31,14 +31,6 @@ pub const DEFAULT_FINISHED_STATES: &[&str] = &["finished", "won", "lost"];
 /// 引擎没有声明时的默认敏感字段（仅供测试用作期望清单）。
 pub const DEFAULT_SENSITIVE_KEYS: &[&str] = &["target", "all_dice"];
 
-/// 「等待玩家入场」阶段的默认名字。
-///
-/// 抽成常量而不是把字面量写在 trait 默认方法里，是为了让**测试替身**能转发到
-/// 同一个值。`DummyEngine` 若想"不覆盖默认值"，它无法写
-/// `GameEngine::waiting_phase(self)`——那调的是它自己，会无限递归（实测栈溢出）。
-/// 有了常量，替身 `None` 分支返回 `DEFAULT_WAITING_PHASE`，语义仍是"用默认值"。
-pub const DEFAULT_WAITING_PHASE: &str = "waiting";
-
 /// 单人还是多人。多人引擎持有一个 `players` 列表，动作必须带 `player_token`。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlayerMode {
@@ -153,22 +145,6 @@ pub trait GameEngine: std::fmt::Debug + Send {
 
     /// 当前状态名（`waiting` / `bidding` / `finished` / `won` / `lost` …）。
     fn phase(&self) -> &'static str;
-
-    /// 这个引擎的"等待玩家入场"阶段叫什么。
-    ///
-    /// 大厅匹配的判据是"当前阶段是不是大厅态"（`lobby.rs`）。这个成员名由引擎
-    /// 自己声明，框架只做比较——与 [`GameEngine::finished_states`] 自报终结态名
-    /// 是同一个思路。
-    ///
-    /// 默认 `"waiting"`：多数多人游戏这么叫。**单人游戏用不上它**——它们
-    /// `player_mode()` 是 `Single`，永远走"新建一局"而不是"并桌"。
-    ///
-    /// 之所以返回 `&'static str` 而不是 `bool`：返回 `bool` 的话每个引擎都要写
-    /// 一个 `fn is_waiting(&self) -> bool`，多一行样板，且与
-    /// `finished_states()` 的风格不一致。
-    fn waiting_phase(&self) -> &'static str {
-        DEFAULT_WAITING_PHASE
-    }
 
     /// 对局是否已结束。
     fn is_finished(&self) -> bool {
