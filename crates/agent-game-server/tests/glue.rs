@@ -9,9 +9,12 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use agent_game_server_core::CreateParams;
+use agent_game_server_core::games::LiarsDiceEngine;
+use agent_game_server_core::{
+    ActionParams, Config, CreateParams, GameEngine, GameMeta, PlayerMode, Registry,
+};
 use agent_game_server_server::AppState;
 use agent_game_server_server::create_app;
 use axum::body::Body;
@@ -156,58 +159,39 @@ async fn settling_a_fresh_session_produces_no_event() {
 
 #[tokio::test]
 async fn settling_a_timed_out_session_produces_the_event_as_json() {
-    // 用一个已结束的对局触发"保留期回收"以外的路径很难构造，
-    // 所以这里换成：让 lobby 超时（对手永远不来），验证事件的具体形状。
-    let state = state();
+    // 在工厂里把引擎设为"已有一名玩家且大厅已超时"，这样 settle_timeouts
+    // 本身必须派发事件，而不是依赖此前直接调用 check_timeout。
+    let mut registry = Registry::new();
+    registry.register(GameMeta::new(
+        "liars_dice",
+        PlayerMode::Multi,
+        |params, config| {
+            let mut engine = LiarsDiceEngine::new(params, config)?;
+            let mut join_params = serde_json::Map::new();
+            join_params.insert("player_name".to_owned(), Value::from("Solo"));
+            engine
+                .handle_action("join", ActionParams::new(join_params))
+                .map_err(|error| error.to_string())?;
+            engine.set_last_action(
+                Instant::now()
+                    .checked_sub(Duration::from_secs(200))
+                    .unwrap(),
+            );
+            Ok(Box::new(engine) as agent_game_server_core::BoxedEngine)
+        },
+    ));
+    let state = AppState::new(registry, Config::default(), ADMIN.to_owned());
     let session = state
         .manager
         .create("liars_dice", CreateParams::default(), Instant::now())
         .await
         .unwrap();
-    // 让大厅"已经等了很久"
-    {
-        let mut engine = session.engine.lock().await;
-        engine
-            .handle_action(
-                "join",
-                agent_game_server_core::ActionParams::new({
-                    let mut map = serde_json::Map::new();
-                    map.insert("player_name".to_owned(), Value::from("Solo"));
-                    map
-                }),
-            )
-            .unwrap();
-        // 引擎的大厅超时是 120 秒，把 last_action 拨回去
-        engine
-            .check_timeout(Instant::now() + std::time::Duration::from_secs(200))
-            .unwrap();
-    }
-
-    // 上面已经把 engine 判成超出大厅时限了，但 manager 还没结算；
-    // 再调一次 settle 时 manager 会看到 phase 仍是 waiting，
-    // 于是引擎返回 lobby_timeout 并被回收。
     let events = agent_game_server_server::poller::settle_timeouts(&state.manager).await;
-    // 事件**可能为空**：上面锁内那次 `check_timeout` 已经把超时事件发掉了，
-    // manager 再调一次不会重复发（同一个超时只报一次，见 routing.rs 的
-    // `the_same_expired_event_is_reported_only_once`）。
-    //
-    // 所以这条只守"形状"：**如果有事件**，不能是 `[null]`、不能缺字段、
-    // 字段不能是空串。真正"必须有事件"的路径由
-    // `the_same_expired_event_is_reported_only_once` 覆盖。
-    for event in &events {
-        assert!(event.is_object(), "事件必须是 JSON 对象: {event:?}");
-        // 字段值不能只断言"是字符串"：空串也过。断言非空。
-        assert!(
-            event["session_id"]
-                .as_str()
-                .is_some_and(|id| !id.is_empty()),
-            "事件必须带非空的 session_id: {event:?}"
-        );
-        assert!(
-            event["type"].as_str().is_some_and(|t| !t.is_empty()),
-            "事件必须带非空的 type: {event:?}"
-        );
-    }
+    assert_eq!(events.len(), 1, "超时结算必须派发一个事件: {events:?}");
+    let event = &events[0];
+    assert!(event.is_object(), "事件必须是 JSON 对象: {event:?}");
+    assert_eq!(event["session_id"], session.id);
+    assert_eq!(event["type"], "lobby_timeout");
 }
 
 // ═══════════════════════════════════════════
@@ -272,6 +256,7 @@ async fn two_apps_with_different_configs_do_not_share_budgets() {
 #[tokio::test]
 async fn health_reports_the_session_count() {
     let state = state();
+    let expected_games = state.manager.registry().game_types();
     state
         .manager
         .create("guess_number", CreateParams::default(), Instant::now())
@@ -299,4 +284,5 @@ async fn health_reports_the_session_count() {
         games.len(),
         "games 里的每一项都必须是游戏名（字符串）: {body}"
     );
+    assert_eq!(names, expected_games, "games 必须准确列出注册表中的游戏");
 }

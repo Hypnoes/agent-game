@@ -356,6 +356,7 @@ async fn a_players_view_keeps_opponent_dice_private() {
         "开局后自己必须拿到骰子，不该是空数组: {}",
         view.private
     );
+    assert_eq!(own.len(), 5, "默认每名玩家必须有 5 颗骰子");
     for face in own {
         let value = face
             .as_i64()
