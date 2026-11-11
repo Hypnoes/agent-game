@@ -417,6 +417,37 @@ agent-game-server-core = { path = ".", features = ["testing"] }
 `[dependencies]` 加一行 `agent-game-server-core = { workspace = true, features = ["testing"] }`，
 `cargo test -p agent-game-server-core --test testing_gate` 必须红。
 
+### 验产物必须用全新的 target 目录
+
+这条来自 009（#11）一次真实的误判：我当时在同一个 `target/` 里反复做手工变异
+实验（改源文件 → 构建 → 恢复），扫到 `DummyEngine` 就断定"新代码导致泄露"，
+把一项能力从 PR 里回退了，还写进了 issue。
+
+后来用干净目录复核：**那些改动全部干净**。当初扫到的是**上一次包含
+`testing` feature 的旧 rlib**——`cargo clean -p <crate>` 不保证把它删掉重编。
+
+正确做法：
+
+```bash
+CARGO_TARGET_DIR=$(mktemp -d) cargo build --release --workspace
+strings "$CARGO_TARGET_DIR"/release/libagent_game*.rlib | grep -E 'DummyEngine|admin-only'
+```
+
+或者 PowerShell：
+
+```powershell
+$env:CARGO_TARGET_DIR = "D:\tmp\target-fresh"
+Remove-Item -Recurse -Force $env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
+cargo build --release --workspace
+Get-ChildItem "$env:CARGO_TARGET_DIR\release\libagent_game*.rlib" | ForEach-Object {
+  $t = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($_.FullName))
+  if ($t -match 'DummyEngine|admin-only') { "LEAK: $($_.Name)" }
+}
+```
+
+**判据**：产物类问题只在全新 target 目录里下结论。复用做过滤镜实验的目录时，
+任何"泄露"都先怀疑是旧产物。
+
 ---
 
 ## 附：写作与编码约定

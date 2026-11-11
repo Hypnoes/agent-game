@@ -238,3 +238,131 @@ fn the_registry_is_shared_and_cheap_to_clone() {
     assert_eq!(cloned.len(), registry.len());
     assert!(cloned.contains("liars_dice"));
 }
+
+/// 大厅态名由引擎自报，框架不写死。
+///
+/// 这条守的是"**零改动加一个新游戏**"：`lobby.rs` 必须比较
+/// `engine.phase() == engine.waiting_phase()`，而不是写死 `"waiting"`。
+/// 写死的话，一个把大厅态叫 `"lobby"` 的新引擎永远匹配不上，每次匹配都开新局
+/// ——症状与 `player_count` 丢失那次一样（玩家分散），但原因完全不同。
+#[tokio::test]
+async fn a_game_with_its_own_lobby_name_still_matches() {
+    let mut registry = Registry::new();
+    registry.register(GameMeta::new(
+        "custom_lobby",
+        PlayerMode::Multi,
+        |_p, _c| {
+            Ok(Box::new(
+                DummyEngine::new("custom_lobby")
+                    .with_phase("lobby")
+                    .with_waiting_phase("lobby"),
+            ) as BoxedEngine)
+        },
+    ));
+    let manager = GameManager::new(registry, Config::default());
+
+    let first = manager
+        .create("custom_lobby", params(json!({})), Instant::now())
+        .await
+        .unwrap();
+    let second = manager
+        .create("custom_lobby", params(json!({})), Instant::now())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        first.id, second.id,
+        "大厅态叫 lobby 的引擎也必须能并桌——判据是自报的名字，不是写死的 waiting"
+    );
+}
+
+/// 反证：阶段名与自报的大厅名不一致时**不该**并桌。
+///
+/// 没有这条，上一条可能被"总是并桌"的错误实现蒙混通过。
+#[tokio::test]
+async fn a_table_not_in_its_lobby_phase_is_not_reused() {
+    let mut registry = Registry::new();
+    registry.register(GameMeta::new(
+        "custom_lobby",
+        PlayerMode::Multi,
+        |_p, _c| {
+            // 阶段是 `lobby`，但自报的大厅名是 `waiting`——两者不相等，不该并桌
+            Ok(Box::new(
+                DummyEngine::new("custom_lobby")
+                    .with_phase("lobby")
+                    .with_waiting_phase("waiting"),
+            ) as BoxedEngine)
+        },
+    ));
+    let manager = GameManager::new(registry, Config::default());
+
+    let first = manager
+        .create("custom_lobby", params(json!({})), Instant::now())
+        .await
+        .unwrap();
+    let second = manager
+        .create("custom_lobby", params(json!({})), Instant::now())
+        .await
+        .unwrap();
+
+    assert_ne!(first.id, second.id, "阶段名与自报的大厅名不一致时不该并桌");
+}
+
+/// 默认值就是 `"waiting"`：不覆盖 `waiting_phase()` 的引擎照样能并桌。
+///
+/// 守 trait 默认实现。改坏默认值（比如改成 `"finished"`）会让所有没覆盖这个
+/// 方法的引擎失去并桌能力，而这条会红。
+#[tokio::test]
+async fn the_default_waiting_phase_is_waiting() {
+    let manager = GameManager::new(dice_registry(), Config::default());
+
+    let first = manager
+        .create("liars_dice", params(json!({})), Instant::now())
+        .await
+        .unwrap();
+    let second = manager
+        .create("liars_dice", params(json!({})), Instant::now())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        first.id, second.id,
+        "没覆盖 waiting_phase 的引擎应当用默认的 waiting 并桌"
+    );
+}
+
+/// 引擎自报的大厅名与**当前阶段**相同，但已经结束 → 不该并桌。
+///
+/// 守的是 `lobby.rs` 里的 `&& !engine.is_finished()`。没有它，一个"阶段名
+/// 恰好等于大厅名、但其实已经打完"的对局会被复用，新玩家加进一局死局。
+///
+/// 构造方式：`DummyEngine` 的 `finished_states()` 是 `["finished"]`，
+/// 所以把阶段与自报大厅名**都**设成 `"finished"`——于是
+/// `phase() == waiting_phase()` 成立，`is_finished()` 也成立。
+/// 只有 `&& !is_finished()` 能挡住它。
+#[tokio::test]
+async fn a_finished_table_is_not_reused_even_if_it_looks_like_a_lobby() {
+    let mut registry = Registry::new();
+    registry.register(GameMeta::new("odd_game", PlayerMode::Multi, |_p, _c| {
+        Ok(Box::new(
+            DummyEngine::new("odd_game")
+                .with_phase("finished")
+                .with_waiting_phase("finished"),
+        ) as BoxedEngine)
+    }));
+    let manager = GameManager::new(registry, Config::default());
+
+    let first = manager
+        .create("odd_game", params(json!({})), Instant::now())
+        .await
+        .unwrap();
+    let second = manager
+        .create("odd_game", params(json!({})), Instant::now())
+        .await
+        .unwrap();
+
+    assert_ne!(
+        first.id, second.id,
+        "已结束的对局即使阶段名等于大厅名，也不该被复用"
+    );
+}
