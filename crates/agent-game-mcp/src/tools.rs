@@ -34,13 +34,11 @@ pub fn all_tools(registry: &Registry) -> Vec<Tool> {
 /// 公开是为了让 `/api/v1/games/tools` 不必经过 MCP 的 `Tool` 类型。
 #[must_use]
 pub fn specs_of(registry: &Registry, game_type: &str) -> Option<Vec<ToolSpec>> {
-    let meta = registry.get(game_type)?;
-    let engine = (meta.factory)(
-        &agent_game_server_core::CreateParams::default(),
-        &agent_game_server_core::Config::default(),
-    )
-    .ok()?;
-    Some(engine.describe_tools())
+    // 工具表在注册元数据里，**不需要构造引擎**。
+    //
+    // 改前这里 `(meta.factory)(...)` 造一个用完即弃的引擎只为读一串静态
+    // JSON Schema，而本函数被三个 HTTP 端点调用——等于每个请求配一个引擎。
+    registry.get(game_type).map(|meta| meta.tools.clone())
 }
 
 /// 某个游戏的工具定义。未注册或该引擎不声明工具时返回空表。
@@ -106,22 +104,22 @@ mod tests {
 
     fn registry() -> Registry {
         let mut registry = Registry::new();
-        registry.register(GameMeta::new(
-            "guess_number",
-            PlayerMode::Single,
-            |params, config| {
+        registry.register(
+            GameMeta::new("guess_number", PlayerMode::Single, |params, config| {
                 agent_game_server_core::games::GuessNumberEngine::new(params, config)
                     .map(|engine| Box::new(engine) as BoxedEngine)
-            },
-        ));
-        registry.register(GameMeta::new(
-            "liars_dice",
-            PlayerMode::Multi,
-            |params, config| {
+            })
+            // 工具面由 `GameMeta` 声明，不是引擎的方法——直接用生产函数，
+            // 免得测试里的 schema 与生产漂移。
+            .with_tools(agent_game_server_core::games::guess_number::tools()),
+        );
+        registry.register(
+            GameMeta::new("liars_dice", PlayerMode::Multi, |params, config| {
                 agent_game_server_core::games::LiarsDiceEngine::new(params, config)
                     .map(|engine| Box::new(engine) as BoxedEngine)
-            },
-        ));
+            })
+            .with_tools(agent_game_server_core::games::liars_dice::tools()),
+        );
         registry
     }
 

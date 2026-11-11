@@ -566,14 +566,14 @@ mod tests {
 
     fn bare_server() -> AgentGameServer {
         let mut registry = Registry::new();
-        registry.register(GameMeta::new(
-            "guess_number",
-            PlayerMode::Single,
-            |params, config| {
+        registry.register(
+            GameMeta::new("guess_number", PlayerMode::Single, |params, config| {
                 agent_game_server_core::games::GuessNumberEngine::new(params, config)
                     .map(|e| Box::new(e) as agent_game_server_core::BoxedEngine)
-            },
-        ));
+            })
+            // 工具面由 `GameMeta` 声明，不是引擎的方法。
+            .with_tools(agent_game_server_core::games::guess_number::tools()),
+        );
         AgentGameServer::new(std::sync::Arc::new(GameManager::new(
             registry,
             agent_game_server_core::Config::default(),
@@ -707,35 +707,36 @@ mod tests {
         fn is_ready_for(&self, _player_index: usize) -> bool {
             !self.never_ready
         }
-        fn describe_tools(&self) -> Vec<agent_game_server_core::ToolSpec> {
-            use agent_game_server_core::ToolSpec;
-            vec![
-                ToolSpec::new(
-                    "probe_state",
-                    "看状态",
-                    serde_json::json!({"type": "object", "properties": {}, "required": []}),
-                ),
-                ToolSpec::new(
-                    "probe_bid",
-                    "叫数",
-                    serde_json::json!({"type": "object", "properties": {}, "required": []}),
-                ),
-            ]
-        }
+    }
+
+    /// 测试桩声明的工具表。现在与 `GameMeta` 一起注册，不是引擎的方法。
+    fn probe_tools() -> Vec<agent_game_server_core::ToolSpec> {
+        use agent_game_server_core::ToolSpec;
+        vec![
+            ToolSpec::new(
+                "probe_state",
+                "看状态",
+                serde_json::json!({"type": "object", "properties": {}, "required": []}),
+            ),
+            ToolSpec::new(
+                "probe_bid",
+                "叫数",
+                serde_json::json!({"type": "object", "properties": {}, "required": []}),
+            ),
+        ]
     }
 
     fn probe_server(entries: &[(&'static str, &'static str, &'static str)]) -> AgentGameServer {
         // (game_type, token, phase)
         let mut registry = Registry::new();
         for &(game_type, token, phase) in entries {
-            registry.register(GameMeta::new(
-                game_type,
-                PlayerMode::Multi,
-                move |_p, _c| {
+            registry.register(
+                GameMeta::new(game_type, PlayerMode::Multi, move |_p, _c| {
                     Ok(Box::new(ProbeEngine::new(token, phase))
                         as agent_game_server_core::BoxedEngine)
-                },
-            ));
+                })
+                .with_tools(probe_tools()),
+            );
         }
         AgentGameServer::new(std::sync::Arc::new(GameManager::new(
             registry,
@@ -830,10 +831,14 @@ mod tests {
     /// 造一台只有 `probe` 一个游戏的 server，且那台引擎永不 ready。
     fn never_ready_server() -> AgentGameServer {
         let mut registry = Registry::new();
-        registry.register(GameMeta::new("probe", PlayerMode::Multi, |_p, _c| {
-            Ok(Box::new(ProbeEngine::new("tok-a", "bidding").never_ready())
-                as agent_game_server_core::BoxedEngine)
-        }));
+        registry.register(
+            GameMeta::new("probe", PlayerMode::Multi, |_p, _c| {
+                Ok(Box::new(ProbeEngine::new("tok-a", "bidding").never_ready())
+                    as agent_game_server_core::BoxedEngine)
+            })
+            // 工具面由 `GameMeta` 声明，不是引擎的方法。
+            .with_tools(probe_tools()),
+        );
         AgentGameServer::new(std::sync::Arc::new(GameManager::new(
             registry,
             agent_game_server_core::Config::default(),

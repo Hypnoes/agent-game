@@ -152,42 +152,6 @@ impl agent_game_server_core::GameEngine for TwoPlayerEngine {
         &self.prompts
     }
 
-    // 工具面必须由引擎自己声明：mcp 层不再硬编码任何游戏的 schema。
-    // 这个替身不声明的话，`two_player_join` 会被当成"未知工具"。
-    fn describe_tools(&self) -> Vec<agent_game_server_core::ToolSpec> {
-        use agent_game_server_core::ToolSpec;
-
-        vec![
-            ToolSpec::new(
-                "two_player_join",
-                "入场",
-                json!({
-                    "type": "object",
-                    "properties": {"player_name": {"type": "string"}},
-                    "required": ["player_name"],
-                }),
-            ),
-            ToolSpec::new(
-                "two_player_state",
-                "看状态",
-                json!({
-                    "type": "object",
-                    "properties": {"player_index": {"type": "integer"}},
-                    "required": [],
-                }),
-            ),
-            ToolSpec::new(
-                "two_player_bid",
-                "叫数",
-                json!({
-                    "type": "object",
-                    "properties": {"quantity": {"type": "integer"}},
-                    "required": ["quantity"],
-                }),
-            ),
-        ]
-    }
-
     fn find_player_by_token(&self, token: &str) -> Option<usize> {
         self.players
             .iter()
@@ -206,21 +170,21 @@ impl agent_game_server_core::GameEngine for TwoPlayerEngine {
 
 fn registry() -> Registry {
     let mut registry = Registry::new();
-    registry.register(GameMeta::new(
-        "two_player",
-        PlayerMode::Multi,
-        |_params, _config| Ok(Box::new(TwoPlayerEngine::new()) as BoxedEngine),
-    ));
-    // 用**真实**的猜数字引擎：它自带工具声明，与生产路径一致。
+    registry.register(
+        GameMeta::new("two_player", PlayerMode::Multi, |_params, _config| {
+            Ok(Box::new(TwoPlayerEngine::new()) as BoxedEngine)
+        })
+        .with_tools(two_player_tools()),
+    );
+    // 用**真实**的猜数字引擎与**真实**的工具表，与生产路径一致。
     // 换成测试替身就没有工具面，`guess_number_start` 会被判成未知工具。
-    registry.register(GameMeta::new(
-        "guess_number",
-        PlayerMode::Single,
-        |params, config| {
+    registry.register(
+        GameMeta::new("guess_number", PlayerMode::Single, |params, config| {
             agent_game_server_core::games::GuessNumberEngine::new(params, config)
                 .map(|engine| Box::new(engine) as BoxedEngine)
-        },
-    ));
+        })
+        .with_tools(agent_game_server_core::games::guess_number::tools()),
+    );
     registry
 }
 
@@ -243,6 +207,43 @@ async fn call(
 // ═══════════════════════════════════════════
 // 工具面
 // ═══════════════════════════════════════════
+
+/// `two_player` 替身暴露的工具。
+///
+/// 工具面由 `GameMeta` 声明，不是引擎的方法——见 `GameMeta::tools`。
+fn two_player_tools() -> Vec<agent_game_server_core::ToolSpec> {
+    use agent_game_server_core::ToolSpec;
+
+    vec![
+        ToolSpec::new(
+            "two_player_join",
+            "入场",
+            json!({
+                "type": "object",
+                "properties": {"player_name": {"type": "string"}},
+                "required": ["player_name"],
+            }),
+        ),
+        ToolSpec::new(
+            "two_player_state",
+            "看状态",
+            json!({
+                "type": "object",
+                "properties": {"player_index": {"type": "integer"}},
+                "required": [],
+            }),
+        ),
+        ToolSpec::new(
+            "two_player_bid",
+            "叫数",
+            json!({
+                "type": "object",
+                "properties": {"quantity": {"type": "integer"}},
+                "required": ["quantity"],
+            }),
+        ),
+    ]
+}
 
 #[tokio::test]
 async fn the_tool_list_is_not_empty_and_is_prefixed_by_game_type() {

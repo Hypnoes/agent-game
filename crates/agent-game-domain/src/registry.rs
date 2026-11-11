@@ -16,7 +16,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::game::{BoxedEngine, PlayerMode};
+use crate::game::{BoxedEngine, PlayerMode, ToolSpec};
 use agent_game_server_infra::config::Config;
 use agent_game_server_infra::params::CreateParams;
 
@@ -29,6 +29,22 @@ pub struct GameMeta {
     pub display_name: &'static str,
     /// 单人还是多人。决定"新请求能不能并进等待中的桌子"。
     pub player_mode: PlayerMode,
+    /// 这个游戏暴露的 MCP 工具。
+    ///
+    /// # 为什么在注册元数据里而不是 `GameEngine` 的 trait 方法
+    ///
+    /// 工具声明是**纯静态数据**：`liars_dice` 那份 103 行 JSON Schema 零
+    /// `self.` 引用，`guess_number` 的 35 行同样。让它住在 trait 上有两个代价：
+    ///
+    /// 1. 引擎的 `impl GameEngine` 块被工具声明撑大——`liars_dice` 是
+    ///    327 行里占 103 行（31%）
+    /// 2. 取工具表要先**构造一个引擎**：`mcp::tools::specs_of()` 曾经为了读
+    ///    一串静态 JSON 而 `(meta.factory)(...)`，而它被三个 HTTP 端点调用，
+    ///    等于每个请求造一个用完即弃的引擎
+    ///
+    /// 放在这里之后，工具表与 `player_mode`、`display_name` 同类——注册时声明
+    /// 一次，读的时候不需要引擎。
+    pub tools: Vec<ToolSpec>,
     /// 构造函数。参数来自创建请求，配置来自服务端。
     pub factory: Arc<dyn Fn(&CreateParams, &Config) -> Result<BoxedEngine, String> + Send + Sync>,
 }
@@ -39,6 +55,7 @@ impl std::fmt::Debug for GameMeta {
             .field("game_type", &self.game_type)
             .field("display_name", &self.display_name)
             .field("player_mode", &self.player_mode)
+            .field("tools", &self.tools.len())
             .finish_non_exhaustive()
     }
 }
@@ -53,6 +70,7 @@ impl GameMeta {
             game_type,
             display_name: game_type,
             player_mode,
+            tools: Vec::new(),
             factory: Arc::new(factory),
         }
     }
@@ -61,6 +79,15 @@ impl GameMeta {
     #[must_use]
     pub fn with_display_name(mut self, display_name: &'static str) -> Self {
         self.display_name = display_name;
+        self
+    }
+
+    /// 声明这个游戏暴露的 MCP 工具。
+    ///
+    /// 工具名必须以 `<game_type>_` 为前缀——框架用这个前缀把工具调用路由回来。
+    #[must_use]
+    pub fn with_tools(mut self, tools: Vec<ToolSpec>) -> Self {
+        self.tools = tools;
         self
     }
 }

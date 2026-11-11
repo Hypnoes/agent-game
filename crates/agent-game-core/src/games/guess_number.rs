@@ -576,47 +576,51 @@ impl GameEngine for GuessNumberEngine {
     fn prompts(&self) -> &PromptStore {
         self.prompts
     }
-
-    fn describe_tools(&self) -> Vec<agent_game_server_domain::game::ToolSpec> {
-        use serde_json::json;
-
-        use agent_game_server_domain::game::ToolSpec;
-
-        vec![
-            ToolSpec::new(
-                "guess_number_start",
-                "开始一局新的猜数字游戏（1-100）。Agent 调用此工具创建对局并开始猜测。",
-                json!({"type": "object", "properties": {}, "required": []}),
-            ),
-            ToolSpec::new(
-                "guess_number_guess",
-                "提交一个 1-100 之间的猜测数字。返回 too_high/too_low/correct 和剩余次数。\
-                 游戏未结束时返回值引导你继续猜。",
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "number": {
-                            "type": "integer",
-                            "description": "猜测数字（1-100）",
-                            "minimum": 1,
-                            "maximum": 100,
-                        }
-                    },
-                    "required": ["number"],
-                }),
-            ),
-            ToolSpec::new(
-                "guess_number_state",
-                "查看当前对局状态，包括所有历史猜测。不需要参数。",
-                json!({"type": "object", "properties": {}, "required": []}),
-            ),
-        ]
-    }
 }
 
 /// 默认终态集合（供测试断言"引擎声明的不是框架默认值"用）。
 pub fn default_finished_states() -> &'static [&'static str] {
     DEFAULT_FINISHED_STATES
+}
+
+/// 这个游戏暴露的 MCP 工具。
+///
+/// 纯静态数据，与引擎实例无关——所以住在注册元数据（`GameMeta::tools`）里，
+/// 不是 `GameEngine` 的方法。见 `GameMeta::tools` 的文档说明。
+#[must_use]
+pub fn tools() -> Vec<agent_game_server_domain::game::ToolSpec> {
+    use agent_game_server_domain::game::ToolSpec;
+    use serde_json::json;
+
+    vec![
+        ToolSpec::new(
+            "guess_number_start",
+            "开始一局新的猜数字游戏（1-100）。Agent 调用此工具创建对局并开始猜测。",
+            json!({"type": "object", "properties": {}, "required": []}),
+        ),
+        ToolSpec::new(
+            "guess_number_guess",
+            "提交一个 1-100 之间的猜测数字。返回 too_high/too_low/correct 和剩余次数。\
+                 游戏未结束时返回值引导你继续猜。",
+            json!({
+                "type": "object",
+                "properties": {
+                    "number": {
+                        "type": "integer",
+                        "description": "猜测数字（1-100）",
+                        "minimum": 1,
+                        "maximum": 100,
+                    }
+                },
+                "required": ["number"],
+            }),
+        ),
+        ToolSpec::new(
+            "guess_number_state",
+            "查看当前对局状态，包括所有历史猜测。不需要参数。",
+            json!({"type": "object", "properties": {}, "required": []}),
+        ),
+    ]
 }
 
 #[cfg(test)]
