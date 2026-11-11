@@ -44,6 +44,22 @@ pub struct GameMeta {
     ///
     /// 放在这里之后，工具表与 `player_mode`、`display_name` 同类——注册时声明
     /// 一次，读的时候不需要引擎。
+    ///
+    /// # 限制：工具表是静态的
+    ///
+    /// **这个字段装的是"注册时就知道"的 schema。** 需要按实例状态动态生成
+    /// schema 的引擎在新结构下没有位置：
+    ///
+    /// - 工厂里构造 schema 不会更新注册表（注册表拿到的是 `GameMeta` 里的那份）
+    /// - 想支持动态 schema 需要另加一个查询接口（比如 `GameMeta` 存一个
+    ///   `fn(&CreateParams) -> Vec<ToolSpec>`），是另一件事
+    ///
+    /// 当前两个内置引擎都是纯静态的（`liars_dice` 那份 103 行 schema 零
+    /// `self.` 引用，`guess_number` 的 35 行同样），所以这不构成实际损失。
+    ///
+    /// 忘调 [`GameMeta::with_tools`] 不会报错，只会**静默地没有工具**——
+    /// `crates/agent-game-server/tests/invariants.rs` 里有一条遍历注册表的
+    /// 看门用例盯着这件事。
     pub tools: Vec<ToolSpec>,
     /// 构造函数。参数来自创建请求，配置来自服务端。
     pub factory: Arc<dyn Fn(&CreateParams, &Config) -> Result<BoxedEngine, String> + Send + Sync>,
