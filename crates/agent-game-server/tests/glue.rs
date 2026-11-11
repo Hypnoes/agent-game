@@ -187,11 +187,26 @@ async fn settling_a_timed_out_session_produces_the_event_as_json() {
     // 再调一次 settle 时 manager 会看到 phase 仍是 waiting，
     // 于是引擎返回 lobby_timeout 并被回收。
     let events = agent_game_server_server::poller::settle_timeouts(&state.manager).await;
-    // 事件可能为空（取决于引擎内部状态），但**不能**是 `[null]`
+    // 事件**可能为空**：上面锁内那次 `check_timeout` 已经把超时事件发掉了，
+    // manager 再调一次不会重复发（同一个超时只报一次，见 routing.rs 的
+    // `the_same_expired_event_is_reported_only_once`）。
+    //
+    // 所以这条只守"形状"：**如果有事件**，不能是 `[null]`、不能缺字段、
+    // 字段不能是空串。真正"必须有事件"的路径由
+    // `the_same_expired_event_is_reported_only_once` 覆盖。
     for event in &events {
         assert!(event.is_object(), "事件必须是 JSON 对象: {event:?}");
-        assert!(event["session_id"].is_string(), "事件必须带 session_id");
-        assert!(event["type"].is_string(), "事件必须带 type");
+        // 字段值不能只断言"是字符串"：空串也过。断言非空。
+        assert!(
+            event["session_id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty()),
+            "事件必须带非空的 session_id: {event:?}"
+        );
+        assert!(
+            event["type"].as_str().is_some_and(|t| !t.is_empty()),
+            "事件必须带非空的 type: {event:?}"
+        );
     }
 }
 
@@ -270,5 +285,18 @@ async fn health_reports_the_session_count() {
     let body: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(body["sessions"], 1);
     assert_eq!(body["ok"], true);
-    assert!(body["games"].is_array());
+    // 不能只断言 `is_array()`：空数组也过。这里注册了两个游戏，断言内容。
+    let games = body["games"]
+        .as_array()
+        .unwrap_or_else(|| panic!("/health 的 games 必须是数组: {body}"));
+    assert!(
+        !games.is_empty(),
+        "注册表里有两个游戏，/health 的 games 不该为空: {body}"
+    );
+    let names: Vec<&str> = games.iter().filter_map(|g| g.as_str()).collect();
+    assert_eq!(
+        names.len(),
+        games.len(),
+        "games 里的每一项都必须是游戏名（字符串）: {body}"
+    );
 }

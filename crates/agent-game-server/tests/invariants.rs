@@ -347,8 +347,21 @@ async fn a_players_view_keeps_opponent_dice_private() {
     }
 
     let view = session.player_view(Some(0)).unwrap();
-    let own = view.private["your_dice"].clone();
-    assert!(own.is_array());
+    // 不能只断言 `is_array()`：空数组、元素类型错都过。断言**具体内容**。
+    let own = view.private["your_dice"]
+        .as_array()
+        .unwrap_or_else(|| panic!("your_dice 必须是数组: {}", view.private));
+    assert!(
+        !own.is_empty(),
+        "开局后自己必须拿到骰子，不该是空数组: {}",
+        view.private
+    );
+    for face in own {
+        let value = face
+            .as_i64()
+            .unwrap_or_else(|| panic!("骰子面必须是整数: {face}"));
+        assert!((1..=6).contains(&value), "骰子面必须在 1..=6，实际 {value}");
+    }
 
     // 公开部分里不能有任何骰子数组
     let public = view.public.to_string();
