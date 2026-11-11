@@ -1,15 +1,28 @@
-//! 把引擎声明的工具翻译成 MCP 的 `Tool`。
+//! 把注册元数据里的工具声明翻译成 MCP 的 `Tool`。
 //!
-//! **工具表不写在这里。** 每款游戏通过 `GameEngine::describe_tools()` 自己声明，
-//! 这个模块只做两件事：
+//! **工具表不写在这里，也不在引擎里。** 每款游戏通过
+//! `GameMeta::with_tools()` 在**注册时**声明一次，这个模块只做两件事：
 //!
-//! 1. 遍历注册表，把每个引擎的声明翻译成 `rmcp::model::Tool`。
+//! 1. 遍历注册表，把每份声明翻译成 `rmcp::model::Tool`。
 //! 2. 判断"某个工具名是否真的被声明过"——前缀能剥出 action，不等于这个 action
 //!    存在，`liars_dice_nope` 也能剥成 `("liars_dice", "nope")`。
 //!
-//! 曾经这里硬编码了两款游戏的完整 schema，于是"零改动加游戏"名不副实：
-//! 新游戏的工具永远返回"未知工具"。改成从注册表派生之后，新增游戏只需实现
-//! `describe_tools()` 并注册 `GameMeta`。
+//! # 两代历史
+//!
+//! 第一代硬编码了两款游戏的完整 schema，于是"零改动加游戏"名不副实：新游戏的
+//! 工具永远返回"未知工具"。
+//!
+//! 第二代替换成 `GameEngine::describe_tools()`——工具表住在引擎里。那带来了
+//! 两个问题：引擎的 `impl` 块被 100 多行 schema 撑大；取工具表要先**构造一个
+//! 引擎**（本模块的 `specs_of` 曾经这么干，而它被 HTTP 端点调用）。
+//!
+//! 现在是第三代：工具表是**注册元数据**（`GameMeta::tools`），读它不需要引擎。
+//!
+//! # 没有工具表会怎样
+//!
+//! `GameMeta::new()` 默认空表——**忘了 `.with_tools()` 不会报错，只会静默地
+//! 没有工具**。`crates/agent-game-server/tests/invariants.rs` 里有一条遍历注册
+//! 表的用例盯着这件事。
 
 use agent_game_server_core::{PlayerMode, Registry, ToolSpec};
 use rmcp::model::Tool;
@@ -18,18 +31,17 @@ use rmcp::model::Tool;
 #[must_use]
 pub fn all_tools(registry: &Registry) -> Vec<Tool> {
     let mut tools = Vec::new();
-    for (game_type, _meta) in registry.iter() {
-        // 造一个实例读它的声明。工具的 schema 与实例状态无关，所以用默认参数
-        // 构造就够了；构造失败的游戏（参数校验过严）会返回空表——那是一个
-        // 真实的信号：它的 `describe_tools` 永远拿不到，值得在测试里断言。
-        if let Some(specs) = specs_of(registry, game_type) {
+    for (game_type, meta) in registry.iter() {
+        // 直接读注册元数据，**不构造引擎**。
+        if !meta.tools.is_empty() {
+            let specs = specs_of(registry, game_type).unwrap_or_default();
             tools.extend(specs.into_iter().map(to_tool));
         }
     }
     tools
 }
 
-/// 某个游戏的工具声明。未注册或构造失败时返回 `None`。
+/// 某个游戏的工具声明。未注册时返回 `None`；注册了但没声明工具时返回空表。
 ///
 /// 公开是为了让 `/api/v1/games/tools` 不必经过 MCP 的 `Tool` 类型。
 #[must_use]
@@ -235,7 +247,7 @@ mod tests {
 
     #[test]
     fn an_engine_without_a_tool_surface_contributes_nothing() {
-        // `describe_tools` 有默认空实现：纯内部用途的引擎不该让工具表出错。
+        // 没有 `.with_tools()` 就是空表：纯内部用途的游戏不该让工具表出错。
         let mut registry = Registry::new();
         registry.register(GameMeta::new("silent", PlayerMode::Single, |_p, _c| {
             Ok(
@@ -245,6 +257,55 @@ mod tests {
         }));
         assert_eq!(all_tools(&registry), Vec::new(), "空注册表不该产出工具");
         assert_eq!(tool_count(&registry, "silent"), 0);
+    }
+
+    /// **读工具表不该构造引擎。**
+    ///
+    /// 这是 #19 的核心收益：`specs_of()` 改前是 `(meta.factory)(...)` 造一个
+    /// 用完即弃的引擎只为读一串静态 JSON，而它被三个 HTTP 端点调用——等于每个
+    /// 请求配一个引擎。
+    ///
+    /// 用一个**会记录调用次数**的 factory 来钉住这件事：只要有人把
+    /// `specs_of` 改回造引擎，计数就不再是 0，这条会红。
+    #[test]
+    fn reading_the_tools_never_constructs_an_engine() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // 用 `'static` 的计数器：factory 要求 `Send + Sync + 'static`
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        CALLS.store(0, Ordering::SeqCst);
+
+        let mut registry = Registry::new();
+        registry.register(
+            GameMeta::new("counter", PlayerMode::Single, |_p, _c| {
+                CALLS.fetch_add(1, Ordering::SeqCst);
+                // 构造故意失败：就算有人真的调了，也拿不到可用引擎
+                Err("这条测试不该构造引擎".to_owned())
+            })
+            .with_tools(vec![ToolSpec::new(
+                "counter_state",
+                "看状态",
+                serde_json::json!({"type": "object", "properties": {}, "required": []}),
+            )]),
+        );
+
+        // 读工具表：三条路径都不能构造引擎
+        let specs = specs_of(&registry, "counter");
+        let tools = all_tools(&registry);
+        let count = tool_count(&registry, "counter");
+
+        assert_eq!(
+            specs.map(|s| s.len()),
+            Some(1),
+            "即使 factory 会失败，工具表也要读得出来"
+        );
+        assert_eq!(tools.len(), 1);
+        assert_eq!(count, 1);
+        assert_eq!(
+            CALLS.load(Ordering::SeqCst),
+            0,
+            "读工具表不该构造引擎——改前 specs_of 会调一次 factory"
+        );
     }
 
     #[test]
