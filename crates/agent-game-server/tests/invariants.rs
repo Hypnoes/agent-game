@@ -294,6 +294,43 @@ fn the_turn_timeout_is_longer_than_the_wait_budget() {
 // 不变量 6：每个注册引擎的秘密边界
 // ═══════════════════════════════════════════
 
+/// 每个注册的游戏都必须声明工具表。
+///
+/// `GameMeta::new()` 默认空表——**忘了 `.with_tools()` 不会报错，只会静默地
+/// 没有工具**，MCP 客户端看到的是"这个游戏没有任何工具"，而且不会有人发现。
+///
+/// `GameEngine::describe_tools()` 时代这条不会出问题（引擎必须有实现），
+/// 改成注册元数据后就成了一个可静默的坑。这条用例遍历注册表盯着它。
+#[tokio::test]
+async fn every_registered_game_declares_tools() {
+    let state = AppState::with_defaults("x".to_owned());
+    let registry: Registry = state.manager.registry().clone();
+    assert!(!registry.is_empty(), "注册表不该为空");
+
+    let mut declared = 0;
+    for (game_type, meta) in registry.iter() {
+        assert!(
+            !meta.tools.is_empty(),
+            "{game_type} 没有声明工具表——检查注册处有没有调 .with_tools()"
+        );
+        // 工具名必须以 game_type 为前缀，否则 MCP 路由剥不出来
+        let prefix = format!("{game_type}_");
+        for spec in &meta.tools {
+            assert!(
+                spec.name.starts_with(&prefix),
+                "{game_type} 的工具 {} 没有 {} 前缀，MCP 会剥不出 action",
+                spec.name,
+                prefix
+            );
+        }
+        declared += meta.tools.len();
+    }
+    assert!(
+        declared >= 7,
+        "两个内置游戏共声明 7 个工具（猜数字 3 + 大话骰 4），实际 {declared}"
+    );
+}
+
 /// 遍历**每一个**注册的引擎，断言它的公开视图不含敏感字段、admin 视图含。
 ///
 /// 这是"秘密信息靠构造而不是靠剥离"的看门人：新增一个引擎若忘了写

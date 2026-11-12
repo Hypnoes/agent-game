@@ -25,14 +25,16 @@ pub fn build_registry() -> Registry {
             GuessNumberEngine::new(params, config)
                 .map(|engine| Box::new(engine) as agent_game_server_core::BoxedEngine)
         })
-        .with_display_name("猜数字"),
+        .with_display_name("猜数字")
+        .with_tools(agent_game_server_core::games::guess_number::tools()),
     );
     registry.register(
         GameMeta::new("liars_dice", PlayerMode::Multi, |params, config| {
             LiarsDiceEngine::new(params, config)
                 .map(|engine| Box::new(engine) as agent_game_server_core::BoxedEngine)
         })
-        .with_display_name("大话骰"),
+        .with_display_name("大话骰")
+        .with_tools(agent_game_server_core::games::liars_dice::tools()),
     );
     registry
 }
