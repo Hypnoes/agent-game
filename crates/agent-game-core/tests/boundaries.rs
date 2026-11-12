@@ -377,15 +377,33 @@ mod guess_number {
 
     #[test]
     fn the_range_boundaries_are_inclusive() {
-        // min/max 本身必须可猜：`<` 写成 `<=` 会让边界值永远猜不中
-        let mut engine = engine();
-        let min = engine.min();
-        let max = engine.max();
-        assert!(guess(&mut engine, min).is_ok(), "下界必须可猜");
-        assert!(guess(&mut engine, max).is_ok(), "上界必须可猜");
+        // min/max 本身必须可猜：`<` 写成 `<=` 会让边界值永远猜不中。
+        //
+        // **每次用一个新引擎**。原版在同一个引擎上连猜 min 与 max，而
+        // `guess(min)` 有 1/100 概率猜中——猜中即结束，接着的 `guess(max)`
+        // 会因为"游戏已结束"而失败，看起来像"上界不可猜"。
+        //
+        // 这是真实的 flaky：实测把区间改成 1..=2（猜中概率 50%）后，
+        // 20 次里失败 9 次。CI 上偶发红过一次。
+        let min = engine().min();
+        let max = engine().max();
 
-        assert!(guess(&mut engine, min - 1).is_err(), "下界外必须被拒");
-        assert!(guess(&mut engine, max + 1).is_err(), "上界外必须被拒");
+        {
+            let mut e = engine();
+            assert!(guess(&mut e, min).is_ok(), "下界必须可猜");
+        }
+        {
+            let mut e = engine();
+            assert!(guess(&mut e, max).is_ok(), "上界必须可猜");
+        }
+        {
+            let mut e = engine();
+            assert!(guess(&mut e, min - 1).is_err(), "下界外必须被拒");
+        }
+        {
+            let mut e = engine();
+            assert!(guess(&mut e, max + 1).is_err(), "上界外必须被拒");
+        }
     }
 
     #[test]
