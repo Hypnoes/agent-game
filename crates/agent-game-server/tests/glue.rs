@@ -9,9 +9,12 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use agent_game_server_core::CreateParams;
+use agent_game_server_core::games::LiarsDiceEngine;
+use agent_game_server_core::{
+    ActionParams, Config, CreateParams, GameEngine, GameMeta, PlayerMode, Registry,
+};
 use agent_game_server_server::AppState;
 use agent_game_server_server::create_app;
 use axum::body::Body;
@@ -156,43 +159,39 @@ async fn settling_a_fresh_session_produces_no_event() {
 
 #[tokio::test]
 async fn settling_a_timed_out_session_produces_the_event_as_json() {
-    // 用一个已结束的对局触发"保留期回收"以外的路径很难构造，
-    // 所以这里换成：让 lobby 超时（对手永远不来），验证事件的具体形状。
-    let state = state();
+    // 在工厂里把引擎设为"已有一名玩家且大厅已超时"，这样 settle_timeouts
+    // 本身必须派发事件，而不是依赖此前直接调用 check_timeout。
+    let mut registry = Registry::new();
+    registry.register(GameMeta::new(
+        "liars_dice",
+        PlayerMode::Multi,
+        |params, config| {
+            let mut engine = LiarsDiceEngine::new(params, config)?;
+            let mut join_params = serde_json::Map::new();
+            join_params.insert("player_name".to_owned(), Value::from("Solo"));
+            engine
+                .handle_action("join", ActionParams::new(join_params))
+                .map_err(|error| error.to_string())?;
+            engine.set_last_action(
+                Instant::now()
+                    .checked_sub(Duration::from_secs(200))
+                    .unwrap(),
+            );
+            Ok(Box::new(engine) as agent_game_server_core::BoxedEngine)
+        },
+    ));
+    let state = AppState::new(registry, Config::default(), ADMIN.to_owned());
     let session = state
         .manager
         .create("liars_dice", CreateParams::default(), Instant::now())
         .await
         .unwrap();
-    // 让大厅"已经等了很久"
-    {
-        let mut engine = session.engine.lock().await;
-        engine
-            .handle_action(
-                "join",
-                agent_game_server_core::ActionParams::new({
-                    let mut map = serde_json::Map::new();
-                    map.insert("player_name".to_owned(), Value::from("Solo"));
-                    map
-                }),
-            )
-            .unwrap();
-        // 引擎的大厅超时是 120 秒，把 last_action 拨回去
-        engine
-            .check_timeout(Instant::now() + std::time::Duration::from_secs(200))
-            .unwrap();
-    }
-
-    // 上面已经把 engine 判成超出大厅时限了，但 manager 还没结算；
-    // 再调一次 settle 时 manager 会看到 phase 仍是 waiting，
-    // 于是引擎返回 lobby_timeout 并被回收。
     let events = agent_game_server_server::poller::settle_timeouts(&state.manager).await;
-    // 事件可能为空（取决于引擎内部状态），但**不能**是 `[null]`
-    for event in &events {
-        assert!(event.is_object(), "事件必须是 JSON 对象: {event:?}");
-        assert!(event["session_id"].is_string(), "事件必须带 session_id");
-        assert!(event["type"].is_string(), "事件必须带 type");
-    }
+    assert_eq!(events.len(), 1, "超时结算必须派发一个事件: {events:?}");
+    let event = &events[0];
+    assert!(event.is_object(), "事件必须是 JSON 对象: {event:?}");
+    assert_eq!(event["session_id"], session.id);
+    assert_eq!(event["type"], "lobby_timeout");
 }
 
 // ═══════════════════════════════════════════
@@ -257,6 +256,7 @@ async fn two_apps_with_different_configs_do_not_share_budgets() {
 #[tokio::test]
 async fn health_reports_the_session_count() {
     let state = state();
+    let expected_games = state.manager.registry().game_types();
     state
         .manager
         .create("guess_number", CreateParams::default(), Instant::now())
@@ -270,5 +270,19 @@ async fn health_reports_the_session_count() {
     let body: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(body["sessions"], 1);
     assert_eq!(body["ok"], true);
-    assert!(body["games"].is_array());
+    // 不能只断言 `is_array()`：空数组也过。这里注册了两个游戏，断言内容。
+    let games = body["games"]
+        .as_array()
+        .unwrap_or_else(|| panic!("/health 的 games 必须是数组: {body}"));
+    assert!(
+        !games.is_empty(),
+        "注册表里有两个游戏，/health 的 games 不该为空: {body}"
+    );
+    let names: Vec<&str> = games.iter().filter_map(|g| g.as_str()).collect();
+    assert_eq!(
+        names.len(),
+        games.len(),
+        "games 里的每一项都必须是游戏名（字符串）: {body}"
+    );
+    assert_eq!(names, expected_games, "games 必须准确列出注册表中的游戏");
 }

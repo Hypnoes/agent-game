@@ -459,7 +459,7 @@ async fn the_admin_list_uses_the_envelope() {
     let state = state();
     let manager = Arc::clone(&state.manager);
     let app = create_app(state);
-    manager
+    let created = manager
         .create(
             "guess_number",
             CreateParams::default(),
@@ -467,6 +467,7 @@ async fn the_admin_list_uses_the_envelope() {
         )
         .await
         .unwrap();
+    let created_id = created.id.clone();
 
     let (status, body) = call(
         app,
@@ -479,16 +480,14 @@ async fn the_admin_list_uses_the_envelope() {
     assert_eq!(status, StatusCode::OK);
     let rows = body["games"].as_array().unwrap();
     assert_eq!(rows.len(), 1);
-    // 信封：框架字段在顶层，引擎状态在 state 里
-    // TODO(#16)：`session_id` 应与 `manager.create()` 返回的精确比较，
-    // 不是"长度 ≥ 8"；`target` 应断言在 `1..=100` 而不是只 `is_number()`。
-    // 这两项是通用契约问题，不属于 #10 的建模范围。
-    let created_id = rows[0]["session_id"]
-        .as_str()
-        .expect("session_id 必须是字符串");
-    assert!(
-        created_id.len() >= 8,
-        "session_id 不该是空串或极短串，实际 {created_id:?}"
+    // 信封：框架字段在顶层，引擎状态在 state 里。
+    //
+    // `session_id` 与创建时那个**精确比较**——信封必须原样透出真实的会话 ID，
+    // 不是"随便一个字符串"。只断言 `is_string()` 会放过任何错值
+    // （#16 指出）。
+    assert_eq!(
+        rows[0]["session_id"], created_id,
+        "admin 列表的 session_id 必须是 manager 创建时那个"
     );
     // `target` 是随机值，但**范围确定**（猜数字默认 1..=100）且必须是整数。
     // 只断言 `is_number()` 会放过小数、负数、越界值（review 指出）。
