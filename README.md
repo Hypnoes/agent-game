@@ -121,6 +121,9 @@ cargo run --release -- --port 9000 --block-budget 30 --turn-timeout 45
 
 `toolCallTimeoutMs` 必须大于服务端 55 秒的等待预算。默认值 60000 会在服务端返回之前先触发传输层超时，Agent 看到的是超时错误而不是对局状态。
 
+完整的接入说明（MCP 与 REST 两种方式、身份与会话的区别、`timeout` 语义、
+常见误解）见 **[docs/client.md](docs/client.md)**。
+
 `state` 工具接受可选参数 `timeout`（秒，缺省 55，上限 55）：传 `0` 表示本次不等待、立即返回；省略或传 `null` 表示用满等待预算。解析在 `core::budget::resolve_budget()` 里，MCP 与 REST 两条传输共用同一份实现。
 
 ### 环境变量
